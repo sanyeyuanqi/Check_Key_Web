@@ -2,7 +2,11 @@ name: key-control
 
 services:
   postgres:
-    image: docker.m.daocloud.io/library/postgres:18-alpine
+    container_name: Key-postgres
+    image: key-postgres:18
+    build:
+      context: .
+      dockerfile: deploy/postgres.Dockerfile
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -17,7 +21,11 @@ services:
       retries: 20
 
   redis:
-    image: docker.m.daocloud.io/library/redis:8-alpine
+    container_name: Key-redis
+    image: key-redis:8
+    build:
+      context: .
+      dockerfile: deploy/redis.Dockerfile
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -29,6 +37,8 @@ services:
       retries: 20
 
   backend:
+    container_name: Key-backend
+    image: key-backend:${APP_VERSION:-2.0.1}
     build: ./backend
     restart: unless-stopped
     env_file: ${DEPLOY_ENV_FILE:-.env.deploy}
@@ -47,7 +57,8 @@ services:
       retries: 12
 
   worker:
-    build: ./backend
+    container_name: Key-worker
+    image: key-backend:${APP_VERSION:-2.0.1}
     restart: unless-stopped
     env_file: ${DEPLOY_ENV_FILE:-.env.deploy}
     command: ["python", "-m", "app.worker"]
@@ -60,6 +71,8 @@ services:
         condition: service_healthy
 
   frontend:
+    container_name: Key-frontend
+    image: key-frontend:${APP_VERSION:-2.0.1}
     build:
       context: ./frontend
       args:
@@ -76,3 +89,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  default:
+    name: Key-network
