@@ -1,0 +1,1 @@
+"""Key Control FastAPI backend."""

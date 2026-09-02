@@ -1,0 +1,34 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.deploy.example
+!frontend/.env.example
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+
+# Python environments and caches
+backend/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data and local artifacts
+postgres_data/
+redis_data/
+backups/
+releases/
+*.log
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
