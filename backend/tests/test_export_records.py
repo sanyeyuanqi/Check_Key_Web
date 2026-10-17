@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 import app.main as api
 import app.credential_service as credential_service
 import app.export_service as export_service
-from app.database import AuthUser, ExportRecord
+from app.database import AuthIPBlock, AuthUser, ExportRecord
 from app.export_service import list_export_records, record_export
 from app.request_context import client_ip as export_client_ip
 
@@ -29,7 +29,10 @@ def sql(statement):
 
 @pytest.fixture
 def session():
-    return MagicMock(spec=AsyncSession)
+    db_session = MagicMock(spec=AsyncSession)
+    db_session.get.return_value = None
+    db_session.get.side_effect = lambda model, *args, **kwargs: None if model is AuthIPBlock else db_session.get.return_value
+    return db_session
 
 
 @pytest.fixture

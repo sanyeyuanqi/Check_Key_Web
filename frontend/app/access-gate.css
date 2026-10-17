@@ -1,0 +1,14 @@
+.access-screen {
+  box-sizing: border-box;
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background: #f5f8f7;
+  color: #526c63;
+}
+.access-card { max-width: 420px; text-align: center; }
+.access-card h1 { margin: 0 0 12px; color: #153b30; font-size: 22px; font-weight: 600; }
+.access-card p { margin: 0 0 20px; font-size: 14px; line-height: 1.8; }
+.access-card button { margin: 0 auto; }

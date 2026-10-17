@@ -1,0 +1,19 @@
+.accounts-management-tabs { display: flex; min-width: 0; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+.accounts-management-tab { min-height: 36px; border: 1px solid #dce5e0; border-radius: 6px; background: #fff; padding: 7px 15px; color: #607870; font-size: 12px; line-height: 1.6; }
+.accounts-management-tab:hover:not(:disabled) { border-color: #a9cbb9; background: #f2f7f4; }
+.accounts-management-tab.is-selected { border-color: #8fbca3; background: #eaf4ef; color: #13795f; font-weight: 600; }
+.accounts-management-page .accounts-panel .panel-toolbar .ui-button { min-height: 36px; padding: 7px 10px; }
+.accounts-management-table { min-width: 1000px; table-layout: fixed; }
+.accounts-management-table th:first-child { width: 19%; }
+.accounts-management-table th:nth-child(2) { width: 13%; }
+.accounts-management-table th:nth-child(3) { width: 10%; }
+.accounts-management-table th:nth-child(4), .accounts-management-table th:nth-child(5) { width: 18%; }
+.accounts-management-table th:nth-child(6) { width: 22%; }
+.accounts-management-table th, .accounts-management-table td { padding-left: 16px; padding-right: 16px; }
+.accounts-management-table td { overflow-wrap: anywhere; }
+.accounts-management-table .cell-muted { white-space: normal; line-height: 1.7; }
+.accounts-management-table .row-actions { flex-wrap: wrap; gap: 6px; }
+@media (max-width: 767px) {
+  .accounts-management-page .mobile-row-footer { flex-wrap: wrap; gap: 10px; }
+  .accounts-management-page .mobile-row-footer .row-actions { flex-wrap: wrap; justify-content: flex-end; }
+}

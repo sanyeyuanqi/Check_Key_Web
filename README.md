@@ -18,6 +18,16 @@
 数据库结构由 Alembic 管理。FastAPI 容器启动时会先执行最新迁移。桌面端可通过环境变量
 `KEY_CONTROL_API_URL=http://localhost:8000` 上传到本地后端。
 
+## 账号权限与 IP 访问管理
+
+账号分为超级管理员（`super_admin`）、管理员（`admin`）和普通用户（`user`）。超级管理员可生成普通用户和管理员账号、重置其密码、停用或恢复账号；管理员只能生成和管理普通用户，无法操作其他管理员或超级管理员。当前账号及超级管理员账号不能通过账号管理接口重置或停用。停用账号及重置密码都会撤销该账号现有会话，恢复账号不会恢复旧会话。
+
+全新数据库使用 `BOOTSTRAP_ADMIN_USERNAME` 和 `BOOTSTRAP_ADMIN_PASSWORD` 创建超级管理员。已有数据库首次升级时，仅将配置名称对应的已启用管理员提升为超级管理员，保留密码和会话；已有超级管理员时不再提升账号。若找不到匹配的已启用管理员，服务记录警告并保留现状，不会自动提升其他用户。
+
+超级管理员可在“账号管理”的“IP 访问管理”中封禁、解除或重新封禁单个 IPv4/IPv6 地址，并填写备注。记录保存在 `auth_ip_blocks`，解除封禁保留记录。IPv6 压缩形式及 IPv4 映射地址会规范化；不接受域名、IP 网段和通配符。为防止失去管理入口，系统不允许封禁当前请求 IP。
+
+访问限制在后端对所有 `/api/` 接口统一检查，包括登录、已有会话、密钥查询和桌面上传；命中后返回 HTTP 403 和 `IP_BLOCKED`。前端进入页面、恢复焦点及每 30 秒检查访问权限，其他接口命中封禁时也会立即切换为禁止访问页面。`/health` 和 CORS 预检不受封禁影响。IP 来源沿用 Uvicorn 解析后的连接地址，不直接信任客户端提交的 `X-Forwarded-For`；反向代理部署需按下方说明配置可信代理地址。
+
 ## 平台密钥存储
 
 密钥按 10 个服务平台存放在独立物理表中：`credentials_openai`、`credentials_anthropic`、`credentials_google`、`credentials_azure`、`credentials_aws`、`credentials_openrouter`、`credentials_tokenrouter`、`credentials_vercel`、`credentials_opencode` 和 `credentials_cloudflare`。OpenCode Zen 使用平台值 `OpenCode`、密钥类型 `opencode_zen`；Cloudflare Workers AI 使用平台值 `Cloudflare`、密钥类型 `cloudflare_workers_ai`，与现有桌面检测器上传格式一致。Cloudflare 上传的完整凭证为 `Account ID|API Token`，加密存储、复制和 TXT 导出均原样保留账号编号及分隔符；通过接口传入的制表符也不会被替换或删除。`credentials` 是按 `provider` 分区的统一查询入口，自身不保存密钥行；历史未知平台保留在 `credentials_other`。按平台或已知密钥类型查询会限定对应平台，由 PostgreSQL 裁剪其余分区。

@@ -10,9 +10,9 @@ export default function AccountsPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (user.role !== 'admin') router.replace('/platform/aws');
+    if (user.role !== 'admin' && user.role !== 'super_admin') router.replace('/platform/aws');
   }, [router, user.role]);
 
-  if (user.role !== 'admin') return null;
-  return <AccountsClient currentUserId={user.id} />;
+  if (user.role !== 'admin' && user.role !== 'super_admin') return null;
+  return <AccountsClient currentUserId={user.id} currentUserRole={user.role} />;
 }

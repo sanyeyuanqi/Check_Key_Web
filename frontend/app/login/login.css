@@ -1,5 +1,5 @@
 .login-page {
-  box-sizing: content-box;
+  box-sizing: border-box;
   display: flex;
   min-height: 100vh;
   min-height: 100dvh;

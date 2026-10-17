@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { AntdRegistry } from '@ant-design/nextjs-registry';
+import AccessGate from './access-gate';
 import './globals.css';
 import './workspace-scrollbars.css';
 
@@ -16,7 +17,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className="antialiased">
-        <AntdRegistry>{children}</AntdRegistry>
+        <AntdRegistry><AccessGate>{children}</AccessGate></AntdRegistry>
       </body>
     </html>
   );

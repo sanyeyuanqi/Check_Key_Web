@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 import app.credential_service as credentials
 import app.main as api
-from app.database import AuthUser, Credential
+from app.database import AuthIPBlock, AuthUser, Credential
 from app.platform_catalog import STORAGE_TYPE_PROVIDERS
 from app.schemas import BatchRevealInput, BatchRevealKeyInput
 from app.security import encrypt_secret
@@ -28,7 +28,10 @@ def parsed(*items):
 
 @pytest.fixture
 def session():
-    return MagicMock(spec=AsyncSession)
+    db_session = MagicMock(spec=AsyncSession)
+    db_session.get.return_value = None
+    db_session.get.side_effect = lambda model, *args, **kwargs: None if model is AuthIPBlock else db_session.get.return_value
+    return db_session
 
 
 @pytest.fixture

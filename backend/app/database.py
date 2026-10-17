@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -49,6 +50,17 @@ class AuthSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuthIPBlock(Base):
+    __tablename__ = "auth_ip_blocks"
+
+    ip_address: Mapped[str] = mapped_column(String(45), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    reason: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("auth_users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class AuthLoginAttempt(Base):

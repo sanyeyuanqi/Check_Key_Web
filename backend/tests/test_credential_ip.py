@@ -13,7 +13,7 @@ import app.main as api
 import app.worker as worker
 from app.config import settings
 from app.credential_service import list_credentials, process_batch_results
-from app.database import Credential, ValidationBatch
+from app.database import AuthIPBlock, Credential, ValidationBatch
 from app.queue import enqueue_results
 from app.schemas import ValidationResultInput
 from app.security import decrypt_job, encrypt_job
@@ -28,7 +28,10 @@ def result_payload():
 
 @pytest.fixture
 def session():
-    return MagicMock(spec=AsyncSession)
+    db_session = MagicMock(spec=AsyncSession)
+    db_session.get.return_value = None
+    db_session.get.side_effect = lambda model, *args, **kwargs: None if model is AuthIPBlock else db_session.get.return_value
+    return db_session
 
 
 @pytest.fixture

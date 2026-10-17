@@ -35,6 +35,7 @@ from .credential_service import (
 )
 from .database import AuthUser, SessionFactory, get_session
 from .export_service import export_filename, list_export_records, normalize_export_status, record_export
+from .ip_access import IPAccessDenied, block_ip, list_ip_blocks, require_allowed_ip, set_ip_block_active
 from .queue import enqueue_results, is_burst, redis_client
 from .request_context import client_ip
 from .schemas import (
@@ -42,6 +43,8 @@ from .schemas import (
     BatchRevealInput,
     BatchStartInput,
     LoginInput,
+    IPBlockAction,
+    IPBlockInput,
     ManagedUserAction,
     ManagedUserInput,
 )
@@ -57,7 +60,10 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title=settings.app_name, version="1.0.0", lifespan=lifespan,
+    dependencies=[Depends(require_allowed_ip)],
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -70,7 +76,11 @@ app.add_middleware(
 
 @app.exception_handler(HTTPException)
 async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
-    return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code, headers=exc.headers)
+    body = {"error": str(exc.detail)}
+    if isinstance(exc, IPAccessDenied):
+        body["code"] = "IP_BLOCKED"
+    headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
+    return JSONResponse(body, status_code=exc.status_code, headers=headers)
 
 
 @app.exception_handler(RequestValidationError)
@@ -116,8 +126,14 @@ async def require_user(request: Request, session: SessionDep) -> AuthUser:
 
 
 async def require_admin(user: Annotated[AuthUser, Depends(require_user)]) -> AuthUser:
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+async def require_super_admin(user: Annotated[AuthUser, Depends(require_user)]) -> AuthUser:
+    if user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="需要超级管理员权限")
     return user
 
 
@@ -144,9 +160,14 @@ async def auth_login(payload: LoginInput, request: Request, session: SessionDep,
     return response
 
 
+@app.get("/api/access")
+async def access_check() -> JSONResponse:
+    return JSONResponse({"allowed": True}, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/auth/me")
-async def auth_me(user: Annotated[AuthUser, Depends(require_user)]) -> dict[str, object]:
-    return {"user": user_json(user)}
+async def auth_me(user: Annotated[AuthUser, Depends(require_user)]) -> JSONResponse:
+    return JSONResponse({"user": user_json(user)}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/auth/logout")
@@ -162,9 +183,9 @@ async def auth_logout(request: Request, session: SessionDep) -> JSONResponse:
 @app.get("/api/admin/users")
 async def admin_users_list(
     session: SessionDep,
-    _: Annotated[AuthUser, Depends(require_admin)],
-) -> dict[str, object]:
-    return {"users": await list_users(session)}
+    admin: Annotated[AuthUser, Depends(require_admin)],
+) -> JSONResponse:
+    return JSONResponse({"users": await list_users(session, admin)}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/admin/users")
@@ -173,9 +194,10 @@ async def admin_users_create(
     request: Request,
     session: SessionDep,
     admin: Annotated[AuthUser, Depends(require_admin)],
-) -> dict[str, object]:
+) -> JSONResponse:
     ensure_trusted_origin(request)
-    return {"account": await create_user(session, admin, payload.username, payload.role)}
+    account = await create_user(session, admin, payload.username, payload.role)
+    return JSONResponse({"account": account}, headers={"Cache-Control": "no-store"})
 
 
 @app.patch("/api/admin/users")
@@ -184,13 +206,51 @@ async def admin_users_update(
     request: Request,
     session: SessionDep,
     admin: Annotated[AuthUser, Depends(require_admin)],
-) -> dict[str, object]:
+) -> JSONResponse:
     ensure_trusted_origin(request)
     if payload.action == "reset_password":
-        return {"account": await reset_password(session, admin, payload.id)}
+        account = await reset_password(session, admin, payload.id)
+        return JSONResponse({"account": account}, headers={"Cache-Control": "no-store"})
     if payload.active is None:
         raise HTTPException(status_code=400, detail="账号状态无效")
-    return {"account": await set_user_active(session, payload.id, payload.active)}
+    account = await set_user_active(session, admin, payload.id, payload.active)
+    return JSONResponse({"account": account}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/admin/ip-blocks")
+async def admin_ip_blocks_list(
+    request: Request,
+    session: SessionDep,
+    _: Annotated[AuthUser, Depends(require_super_admin)],
+) -> JSONResponse:
+    return JSONResponse(
+        {"blocks": await list_ip_blocks(session), "clientIp": client_ip(request)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/admin/ip-blocks")
+async def admin_ip_blocks_create(
+    payload: IPBlockInput,
+    request: Request,
+    session: SessionDep,
+    admin: Annotated[AuthUser, Depends(require_super_admin)],
+) -> JSONResponse:
+    ensure_trusted_origin(request)
+    block = await block_ip(session, admin, payload.ip, payload.reason, client_ip(request))
+    return JSONResponse({"block": block}, headers={"Cache-Control": "no-store"})
+
+
+@app.patch("/api/admin/ip-blocks")
+async def admin_ip_blocks_update(
+    payload: IPBlockAction,
+    request: Request,
+    session: SessionDep,
+    admin: Annotated[AuthUser, Depends(require_super_admin)],
+) -> JSONResponse:
+    ensure_trusted_origin(request)
+    block = await set_ip_block_active(session, admin, payload.ip, payload.active, client_ip(request))
+    return JSONResponse({"block": block}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/keys")

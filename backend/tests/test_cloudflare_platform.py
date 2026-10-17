@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 import app.credential_service as credentials
 import app.main as api
-from app.database import Credential, CredentialRegistry, CredentialStatus, ValidationBatch, ValidKeyRecord
+from app.database import AuthIPBlock, Credential, CredentialRegistry, CredentialStatus, ValidationBatch, ValidKeyRecord
 from app.platform_catalog import STORAGE_TYPE_PROVIDERS
 from app.schemas import BatchRevealKeyInput, ValidationResultInput
 from app.security import decrypt_secret, encrypt_secret, fingerprint
@@ -61,6 +61,7 @@ def cloudflare_database(request):
         yield SimpleNamespace(
             execute=AsyncMock(side_effect=db.execute), scalar=AsyncMock(side_effect=db.scalar),
             scalars=AsyncMock(side_effect=db.scalars), first_secret=first_secret, second_secret=second_secret,
+            get=AsyncMock(side_effect=lambda model, identity: None if model is AuthIPBlock else db.get(model, identity)),
         )
     engine.dispose()
 

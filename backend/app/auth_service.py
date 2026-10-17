@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .database import AuthLoginAttempt, AuthSession, AuthUser
+from .request_context import client_ip
 from .security import (
     generated_password,
     generated_username,
@@ -18,6 +20,10 @@ from .security import (
     random_session_token,
     verify_password,
 )
+
+
+logger = logging.getLogger(__name__)
+MANAGER_ROLES = {"super_admin", "admin"}
 
 
 def utcnow() -> datetime:
@@ -30,14 +36,28 @@ def user_json(user: AuthUser) -> dict[str, object]:
 
 async def ensure_bootstrap_admin(session: AsyncSession) -> None:
     count = await session.scalar(select(func.count()).select_from(AuthUser))
-    if count or not settings.bootstrap_admin_password:
-        return
     username = settings.bootstrap_admin_username.strip()
+    if count:
+        super_admin = await session.scalar(select(AuthUser.id).where(AuthUser.role == "super_admin").limit(1))
+        if super_admin is not None:
+            return
+        admin = await session.scalar(select(AuthUser).where(
+            AuthUser.username_normalized == username.lower(),
+            AuthUser.role == "admin", AuthUser.active.is_(True),
+        ).with_for_update())
+        if admin is None:
+            logger.warning("No matching active bootstrap administrator; account roles remain unchanged")
+            return
+        admin.role = "super_admin"
+        await session.commit()
+        return
+    if not settings.bootstrap_admin_password:
+        return
     session.add(AuthUser(
         username=username,
         username_normalized=username.lower(),
         password_hash=hash_password(settings.bootstrap_admin_password),
-        role="admin",
+        role="super_admin",
         active=True,
     ))
     try:
@@ -61,8 +81,7 @@ async def login(
     password: str,
 ) -> tuple[AuthUser, str]:
     username = username_value.strip().lower()
-    forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
-    ip = forwarded or (request.client.host if request.client else "unknown")
+    ip = client_ip(request) or "unknown"
     ip_hash = hashlib.sha256(ip.encode()).hexdigest()
     window = settings.login_lock_minutes * 60
     ip_count, user_count = await _rate_count(redis, f"login:ip:{ip_hash}", window), await _rate_count(
@@ -150,6 +169,11 @@ async def revoke_session(session: AsyncSession, token: str | None) -> None:
 
 
 async def create_user(session: AsyncSession, admin: AuthUser, requested_username: str, role: str) -> dict[str, object]:
+    require_account_manager(admin)
+    if role not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="不支持的账号角色")
+    if admin.role == "admin" and role != "user":
+        raise HTTPException(status_code=403, detail="管理员只能创建普通成员")
     username = requested_username.strip() or generated_username()
     if not re.fullmatch(r"[a-zA-Z0-9._-]{3,32}", username):
         raise HTTPException(status_code=400, detail="账号须为 3–32 位字母、数字、点、横线或下划线")
@@ -158,7 +182,7 @@ async def create_user(session: AsyncSession, admin: AuthUser, requested_username
         username=username,
         username_normalized=username.lower(),
         password_hash=hash_password(password),
-        role="admin" if role == "admin" else "user",
+        role=role,
         active=True,
         created_by=admin.id,
     )
@@ -172,17 +196,27 @@ async def create_user(session: AsyncSession, admin: AuthUser, requested_username
     return {"id": user.id, "username": user.username, "password": password, "role": user.role}
 
 
-async def managed_user(session: AsyncSession, user_id: int) -> AuthUser:
+def require_account_manager(admin: AuthUser) -> None:
+    if admin.role not in MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+
+
+async def managed_user(session: AsyncSession, admin: AuthUser, user_id: int) -> AuthUser:
+    require_account_manager(admin)
     user = await session.get(AuthUser, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="账号不存在")
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="当前登录账号不能在此修改")
+    if user.role == "super_admin":
+        raise HTTPException(status_code=403, detail="超级管理员账号不能在此修改")
+    if user.role not in {"admin", "user"} or (admin.role == "admin" and user.role != "user"):
+        raise HTTPException(status_code=403, detail="无权管理该账号")
     return user
 
 
 async def reset_password(session: AsyncSession, admin: AuthUser, user_id: int) -> dict[str, object]:
-    user = await managed_user(session, user_id)
-    if user.id == admin.id:
-        raise HTTPException(status_code=400, detail="当前登录账号不能在此重置密码")
+    user = await managed_user(session, admin, user_id)
     password = generated_password()
     user.password_hash = hash_password(password)
     user.failed_login_count = 0
@@ -194,10 +228,8 @@ async def reset_password(session: AsyncSession, admin: AuthUser, user_id: int) -
     return {"id": user.id, "username": user.username, "password": password, "role": user.role}
 
 
-async def set_user_active(session: AsyncSession, user_id: int, active: bool) -> dict[str, object]:
-    user = await managed_user(session, user_id)
-    if user.role == "admin":
-        raise HTTPException(status_code=400, detail="管理员账号不能被禁用")
+async def set_user_active(session: AsyncSession, admin: AuthUser, user_id: int, active: bool) -> dict[str, object]:
+    user = await managed_user(session, admin, user_id)
     user.active = active
     user.failed_login_count = 0
     user.locked_until = None
@@ -209,8 +241,12 @@ async def set_user_active(session: AsyncSession, user_id: int, active: bool) -> 
     return {"id": user.id, "active": active}
 
 
-async def list_users(session: AsyncSession) -> list[dict[str, object]]:
-    users = (await session.scalars(select(AuthUser).order_by(AuthUser.created_at.desc()).limit(200))).all()
+async def list_users(session: AsyncSession, admin: AuthUser) -> list[dict[str, object]]:
+    require_account_manager(admin)
+    statement = select(AuthUser)
+    if admin.role == "admin":
+        statement = statement.where((AuthUser.role == "user") | (AuthUser.id == admin.id))
+    users = (await session.scalars(statement.order_by(AuthUser.created_at.desc(), AuthUser.id.desc()).limit(200))).all()
     return [{
         "id": user.id,
         "username": user.username,

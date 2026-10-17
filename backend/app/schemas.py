@@ -19,6 +19,20 @@ class ManagedUserAction(BaseModel):
     active: bool | None = None
 
 
+class IPBlockInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ip: str = Field(min_length=1, max_length=80)
+    reason: str = Field(default="", max_length=200)
+
+
+class IPBlockAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ip: str = Field(min_length=1, max_length=80)
+    active: bool
+
+
 class BatchRevealKeyInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

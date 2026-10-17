@@ -9,8 +9,10 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+from urllib.parse import quote, quote_plus
 import uuid
 
 import asyncpg
@@ -75,11 +77,30 @@ def migrate(database, target="head", *, downgrade=False, success=True):
         [sys.executable, "-m", "alembic", "downgrade" if downgrade else "upgrade", target],
         cwd=BACKEND, env=environment, capture_output=True, text=True,
     )
+    result.stdout = redact_migration_output(result.stdout, database)
+    result.stderr = redact_migration_output(result.stderr, database)
     if success:
-        assert result.returncode == 0, result.stderr
+        errors = [line.strip() for line in result.stderr.splitlines() if "Error:" in line or "Exception:" in line]
+        summary = errors[-1][:240] if errors else "Migration diagnostics captured and redacted"
+        assert result.returncode == 0, f"Alembic migration to {target} failed: {summary}"
     else:
         assert result.returncode != 0
     return result
+
+
+def redact_migration_output(output, database):
+    from app.config import settings
+
+    passwords = {database.password, make_url(settings.database_url).password}
+    variants = {
+        variant
+        for password in passwords if password
+        for variant in (password, quote(password, safe=""), quote_plus(password, safe=""))
+    }
+    variants.update(value.replace("%", "%%") for value in list(variants))
+    for value in sorted(variants, key=len, reverse=True):
+        output = output.replace(value, "[REDACTED]")
+    return re.sub(r"(postgres(?:ql)?(?:\+\w+)?://[^:\s/]+):[^@\s]+@", r"\1:[REDACTED]@", output)
 
 
 async def connect(database):

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 import app.credential_service as credentials
 import app.main as api
-from app.database import Credential, CredentialRegistry, CredentialStatus, ValidKeyRecord
+from app.database import AuthIPBlock, Credential, CredentialRegistry, CredentialStatus, ValidKeyRecord
 from app.export_service import export_filename
 from app.schemas import BatchRevealKeyInput
 from app.security import encrypt_secret, fingerprint
@@ -55,6 +55,7 @@ def opencode_database():
         yield SimpleNamespace(
             execute=AsyncMock(side_effect=db.execute), scalar=AsyncMock(side_effect=db.scalar),
             scalars=AsyncMock(side_effect=db.scalars),
+            get=AsyncMock(side_effect=lambda model, identity: None if model is AuthIPBlock else db.get(model, identity)),
         )
     engine.dispose()
 

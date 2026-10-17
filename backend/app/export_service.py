@@ -97,7 +97,7 @@ async def list_export_records(
     session: AsyncSession, *, user: AuthUser, page: int,
     username: str | None = None, ip: str | None = None,
 ) -> dict[str, Any]:
-    filters = [] if user.role == "admin" else [ExportRecord.user_id == user.id]
+    filters = [] if user.role in {"super_admin", "admin"} else [ExportRecord.user_id == user.id]
     account_query = (username or "").strip()
     if account_query:
         filters.append(ExportRecord.username.ilike(f"%{_escape_filter_literal(account_query)}%", escape="\\"))

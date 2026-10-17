@@ -50,14 +50,14 @@ export default function AppShell({ currentUser, onRefresh, children }: {
             })}
           </div>
           <div role="group" aria-label="管理功能" className="navigation-group">
-            {currentUser.role === 'admin' && <Link href="/accounts" prefetch={false} onMouseEnter={() => router.prefetch('/accounts')} onFocus={() => router.prefetch('/accounts')} aria-current={activeItem === 'accounts' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link accounts-link ${activeItem === 'accounts' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="accounts" /><span>账号管理</span></Link>}
+            {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && <Link href="/accounts" prefetch={false} onMouseEnter={() => router.prefetch('/accounts')} onFocus={() => router.prefetch('/accounts')} aria-current={activeItem === 'accounts' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link accounts-link ${activeItem === 'accounts' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="accounts" /><span>账号管理</span></Link>}
             <Link href="/export-records" prefetch={false} onMouseEnter={() => router.prefetch('/export-records')} onFocus={() => router.prefetch('/export-records')} aria-current={activeItem === 'export-records' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${activeItem === 'export-records' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="export-records" /><span>导出记录</span></Link>
             <Link href="/valid-key-records" prefetch={false} onMouseEnter={() => router.prefetch('/valid-key-records')} onFocus={() => router.prefetch('/valid-key-records')} aria-current={activeItem === 'valid-key-records' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${activeItem === 'valid-key-records' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="valid-key-records" /><span>有效密钥记录</span></Link>
           </div>
         </nav>
         <div className="sidebar-user">
           <span aria-hidden="true" className="sidebar-user-avatar">{Array.from(currentUser.username.trim())[0]?.toUpperCase() || 'U'}</span>
-          <div className="user-copy"><p title={currentUser.username}>{currentUser.username}</p><span>{currentUser.role === 'admin' ? '工作空间管理员' : '工作空间成员'}</span></div>
+          <div className="user-copy"><p title={currentUser.username}>{currentUser.username}</p><span>{currentUser.role === 'super_admin' ? '超级管理员' : currentUser.role === 'admin' ? '工作空间管理员' : '工作空间成员'}</span></div>
           <button type="button" title="退出登录" aria-label="退出登录" disabled={signingOut} onClick={() => void logout()} className="ui-text-button logout-button">退出</button>
         </div>
       </aside>
