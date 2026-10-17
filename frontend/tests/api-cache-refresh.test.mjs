@@ -2,6 +2,31 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { apiFetch, markNextReadsFresh } from '../lib/api-client.ts';
 
+test('header refresh resolves a same-origin relative API base and preserves subsequent relative reads', async (t) => {
+  const previousBase = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const previousWindow = globalThis.window;
+  process.env.NEXT_PUBLIC_API_BASE_URL = '/';
+  globalThis.window = { location: { origin: 'https://synthetic-workspace.example' } };
+  t.after(() => {
+    if (previousBase === undefined) delete process.env.NEXT_PUBLIC_API_BASE_URL;
+    else process.env.NEXT_PUBLIC_API_BASE_URL = previousBase;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  });
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url, init });
+    return Response.json({ synthetic: true });
+  });
+  const relativeClient = await import('../lib/api-client.ts?relative-refresh');
+  relativeClient.markNextReadsFresh(['/api/keys']);
+  await relativeClient.apiFetch('/api/keys?provider=OpenAI&page=2#results');
+  assert.equal(requests[0].url, 'https://synthetic-workspace.example/api/keys?provider=OpenAI&page=2&refresh=1#results');
+  assert.equal(requests[0].init.credentials, 'include');
+  await relativeClient.apiFetch('/api/keys?provider=OpenAI&page=2');
+  assert.equal(requests[1].url, '/api/keys?provider=OpenAI&page=2');
+});
+
 function transport(t) {
   const requests = [];
   markNextReadsFresh([]);

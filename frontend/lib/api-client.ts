@@ -22,7 +22,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if ((init.method ?? 'GET').toUpperCase() === 'GET' && !init.signal?.aborted && freshReadPaths.size > 0) {
     const endpoint = (path.startsWith('/') ? path : `/${path}`).split(/[?#]/, 1)[0];
     if (freshReadPaths.has(endpoint)) {
-      const url = new URL(requestUrl);
+      const url = new URL(requestUrl, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
       url.searchParams.set('refresh', '1');
       requestUrl = url.toString();
       freshReadPaths.delete(endpoint);
