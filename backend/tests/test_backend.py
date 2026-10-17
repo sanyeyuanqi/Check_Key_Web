@@ -23,9 +23,18 @@ def test_api_contract_is_exposed():
 
 def test_storage_and_status_mapping():
     assert infer_storage_type("Anthropic", "anthropic") == "anthropic_official"
+    assert infer_storage_type("Anthropic", "anthropic_oauth") == "anthropic_enterprise_subscription"
     assert infer_storage_type("AWS Bedrock", "aws_access_key") == "aws_access"
     assert infer_storage_type("Azure", "azure", "claude-sonnet-4-6") == "azure_claude"
     assert infer_storage_type("Google", "google_ai_studio") == "google_ai_studio_gemini"
+    assert infer_storage_type("TokenRouter", "tokenrouter") == "tokenrouter"
+    assert infer_storage_type("Vercel", "vercel") == "vercel"
+    assert infer_storage_type("OpenCode", "opencode") == "opencode_zen"
+    assert infer_storage_type("OpenCode", "openai") == "opencode_zen"
+    assert infer_storage_type("OpenCode", "anthropic") == "opencode_zen"
+    assert infer_storage_type("Cloudflare", "cloudflare") == "cloudflare_workers_ai"
+    assert infer_storage_type("Cloudflare", "openai") == "cloudflare_workers_ai"
+    assert infer_storage_type("Cloudflare", "anthropic") == "cloudflare_workers_ai"
     assert result_bucket("valid") == "valid"
     assert result_bucket("rate_limited") == "invalid"
 

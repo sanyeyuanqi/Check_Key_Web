@@ -25,7 +25,7 @@ async def process_message(redis: Redis, message_id: str | bytes, fields: dict[An
     payload = decrypt_job(payload_value)
     results = [ValidationResultInput.model_validate(item) for item in payload["results"]]
     async with SessionFactory() as session:
-        await process_batch_results(session, int(payload["batch_id"]), results)
+        await process_batch_results(session, int(payload["batch_id"]), results, source_ip=payload.get("source_ip"))
     await redis.xack(settings.redis_stream_name, settings.redis_consumer_group, message_id)
 
 

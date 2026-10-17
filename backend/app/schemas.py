@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class LoginInput(BaseModel):
@@ -17,6 +17,28 @@ class ManagedUserAction(BaseModel):
     id: int = Field(gt=0)
     action: Literal["reset_password", "set_active"]
     active: bool | None = None
+
+
+class BatchRevealKeyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int = Field(gt=0, le=9_223_372_036_854_775_807, strict=True)
+    type: str = Field(min_length=1, max_length=64, strict=True)
+    status: Literal["valid", "usage_limit_reached", "insufficient_credit", "invalid"]
+
+
+class BatchRevealInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    keys: list[BatchRevealKeyInput] = Field(min_length=1, max_length=100)
+
+    @field_validator("keys")
+    @classmethod
+    def unique_keys(cls, keys: list[BatchRevealKeyInput]) -> list[BatchRevealKeyInput]:
+        identities = [(item.type, item.status, item.id) for item in keys]
+        if len(identities) != len(set(identities)):
+            raise ValueError("所选密钥不能重复")
+        return keys
 
 
 class BatchStartInput(BaseModel):

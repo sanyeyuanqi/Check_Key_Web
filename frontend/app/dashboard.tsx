@@ -1,41 +1,44 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { credentialStorageTypes } from '@/lib/credential-types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Checkbox, ConfigProvider, type ThemeConfig } from 'antd';
+import { credentialStorageTypes, resultBucket } from '@/lib/credential-types';
 import { apiFetch, apiUrl } from '@/lib/api-client';
+import { EmptyState, Modal } from '@/app/workspace-ui';
+import { platformByProvider } from '@/lib/platforms';
+import { UploadDateTimeRangePicker } from '@/app/upload-date-picker';
+import { CredentialStatusSelect } from '@/app/credential-status-select';
+import { addUploadTimeRangeFilter, uploadTimeRangeError, type UploadTimeRange } from '@/lib/upload-time-range';
+import { BulkCopyError, keySelectionId, selectedKeysText } from '@/lib/key-selection';
+import { appliedExportRange, keyListQueryParams, type KeyListQuery } from '@/lib/key-list-query';
 
-type Summary = { total: number; valid: number; recovery: number; insufficient: number; invalid: number };
+type CredentialStatus = {
+  value: string; name: string; tone: 'valid' | 'recovery' | 'insufficient' | 'invalid' | 'neutral'; sortOrder: number; count: number;
+};
 type KeyRow = {
-  id: number; keyPrefix: string; provider: string; masked: string; status: string; createdAt: string;
+  id: number; keyPrefix: string; provider: string; storageType: string; masked: string; status: string; createdAt: string; updatedAt: string; ipAddress: string | null;
 };
 
-const statusTabs = [
-  { label: '可用', value: 'valid' }, { label: '额度待恢复', value: 'usage_limit_reached' },
-  { label: '余额不足', value: 'insufficient_credit' }, { label: '不可用', value: 'invalid' },
-];
-const exportOptions = [
-  { label: '所有密钥', value: 'all' },
-  { label: '所有可用密钥', value: 'valid' },
-  { label: '所有额度待恢复', value: 'usage_limit_reached' },
-  { label: '所有余额不足', value: 'insufficient_credit' },
-  { label: '所有不可用', value: 'invalid' },
-] as const;
-type ExportStatus = (typeof exportOptions)[number]['value'];
-const statusStyle: Record<string, string> = {
-  pending: 'bg-amber-50 text-amber-700', valid: 'bg-emerald-50 text-emerald-700',
-  usage_limit_reached: 'bg-violet-50 text-violet-700', invalid: 'bg-rose-50 text-rose-700',
-  insufficient_credit: 'bg-amber-50 text-amber-700',
-};
-const statusLabel: Record<string, string> = {
-  valid: '可用', usage_limit_reached: '额度待恢复', invalid: '无效',
-  insufficient_credit: '余额不足', permission_error: '权限不足', rate_limited: '请求限速',
-  billing_error: '账单异常', network_error: '网络异常', server_error: '服务异常',
-  model_unavailable: '模型不可用', request_or_spend_limit_error: '请求/额度限制', http_error: '接口异常',
+const selectionTheme: ThemeConfig = {
+  components: { Checkbox: { colorPrimary: '#13795f', colorPrimaryHover: '#0e654f', colorBorder: '#c6d7ce', controlInteractiveSize: 14, borderRadiusSM: 3 } },
 };
 
 function fmt(value?: string | null) {
   if (!value) return '—';
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function exportDownloadName(contentDisposition: string | null, fallback: string) {
+  const encoded = contentDisposition?.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  let name = '';
+  if (encoded) {
+    try { name = decodeURIComponent(encoded[1].trim().replace(/^"|"$/g, '')); } catch { /* Use the ordinary filename below. */ }
+  }
+  if (!name) {
+    const ordinary = contentDisposition?.match(/filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i);
+    name = (ordinary?.[1] ?? ordinary?.[2] ?? '').replace(/\\(.)/g, '$1').trim();
+  }
+  return name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim() || fallback;
 }
 
 function paginationItems(current: number, total: number): Array<number | 'start-gap' | 'end-gap'> {
@@ -46,63 +49,144 @@ function paginationItems(current: number, total: number): Array<number | 'start-
 }
 
 export default function Dashboard({ initialProvider }: { initialProvider: string }) {
-  const [summary, setSummary] = useState<Summary>({ total: 0, valid: 0, recovery: 0, insufficient: 0, invalid: 0 });
+  const [statuses, setStatuses] = useState<CredentialStatus[]>([]);
   const [keys, setKeys] = useState<KeyRow[]>([]);
-  const [status, setStatus] = useState('valid');
+  const [statusDraft, setStatusDraft] = useState('all');
+  const [uploadTimeRangeDraft, setUploadTimeRangeDraft] = useState<UploadTimeRange>({ start: '', end: '' });
+  const [appliedQuery, setAppliedQuery] = useState<KeyListQuery>({ mode: 'filters', status: 'all', range: { start: '', end: '' } });
   const provider = initialProvider;
-  const [storageType, setStorageType] = useState(() => credentialStorageTypes.find((item) => item.provider === initialProvider)?.id ?? '');
+  const availableStorageTypes = credentialStorageTypes.filter((item) => item.provider === provider);
+  const [storageType, setStorageType] = useState<string>(availableStorageTypes[0]?.id ?? '');
   const [queryInput, setQueryInput] = useState('');
-  const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [busy, setBusy] = useState(true);
   const [reveal, setReveal] = useState<{ masked: string; secret: string } | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
-  const [exportStatus, setExportStatus] = useState<ExportStatus>('all');
+  const [exportStatuses, setExportStatuses] = useState<string[]>(['valid']);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [selectedKeyIds, setSelectedKeyIds] = useState<Set<string>>(() => new Set());
+  const [copyMode, setCopyMode] = useState<'single' | 'batch' | null>(null);
+  const copying = copyMode !== null;
+  const activeRequest = useRef<AbortController | null>(null);
+  const activeCopy = useRef<AbortController | null>(null);
 
-  const loadKeys = useCallback(async (silent = false) => {
-    if (!silent) setBusy(true);
-    const params = new URLSearchParams();
-    params.set('status', status);
-    if (provider) params.set('provider', provider);
-    if (storageType) params.set('type', storageType);
-    if (query.trim()) params.set('q', query.trim());
-    params.set('page', String(page));
-    const response = await apiFetch(`/api/keys?${params}`, { cache: 'no-store' });
-    if (response.status === 401) {
-      window.location.replace('/login');
-      return;
-    }
-    if (response.ok) {
-      const body = await response.json() as { keys: KeyRow[]; summary: Summary; total: number; totalPages: number };
+  const resetKeySelection = useCallback(() => {
+    activeCopy.current?.abort();
+    activeCopy.current = null;
+    setCopyMode(null);
+    setSelectedKeyIds(new Set());
+  }, []);
+
+  const loadKeys = useCallback(async () => {
+    resetKeySelection();
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setBusy(true);
+    setError('');
+    try {
+      const params = keyListQueryParams(appliedQuery, { provider, storageType, page });
+      const response = await apiFetch(`/api/keys?${params}`, { cache: 'no-store', signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (response.status === 401) {
+        window.location.replace('/login');
+        return;
+      }
+      if (!response.ok) throw new Error('Unable to load keys');
+      const body = await response.json() as { keys: KeyRow[]; statuses: CredentialStatus[]; total: number; totalPages: number };
+      if (controller.signal.aborted) return;
+      const nextStatuses = [...body.statuses].sort((left, right) => left.sortOrder - right.sortOrder || left.value.localeCompare(right.value));
       setKeys(body.keys);
-      setSummary(body.summary);
+      setStatuses(nextStatuses);
+      setExportStatuses((current) => current.filter((value) => nextStatuses.some((item) => item.value === value)));
       setTotal(body.total);
       setTotalPages(body.totalPages);
       if (page > body.totalPages) setPage(body.totalPages);
+    } catch {
+      if (!controller.signal.aborted) {
+        setKeys([]);
+        setStatuses([]);
+        setTotal(0);
+        setTotalPages(1);
+        setError('无法读取密钥，请稍后刷新重试。');
+      }
+    } finally {
+      if (!controller.signal.aborted) setBusy(false);
     }
-    if (!silent) setBusy(false);
-  }, [status, provider, storageType, query, page]);
+  }, [storageType, provider, appliedQuery, page, setExportStatuses, resetKeySelection]);
+
+  useEffect(() => () => {
+    activeCopy.current?.abort();
+    activeCopy.current = null;
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadKeys(); }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      activeRequest.current?.abort();
+    };
   }, [loadKeys]);
+
   function showNotice(message: string) { setNotice(message); setTimeout(() => setNotice(''), 2600); }
 
-  function submitSearch(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextQuery = queryInput.trim();
+  function prepareFilterChange() {
+    resetKeySelection();
+    activeRequest.current?.abort();
+    setBusy(true);
+    setError('');
+  }
+
+  function changePage(nextPage: number) {
+    if (nextPage === page) return;
+    prepareFilterChange();
+    setPage(nextPage);
+  }
+
+  function changeStorageType(nextType: string) {
+    if (nextType === storageType) return;
+    prepareFilterChange();
+    setStatuses([]);
+    setStatusDraft('all');
+    setUploadTimeRangeDraft({ start: '', end: '' });
+    setQueryInput('');
+    setAppliedQuery({ mode: 'filters', status: 'all', range: { start: '', end: '' } });
+    setExportStatuses(['valid']);
+    setStorageType(nextType);
     setPage(1);
-    if (nextQuery === query && page === 1) void loadKeys();
-    else setQuery(nextQuery);
+  }
+
+  function changeUploadTimeRange(nextRange: UploadTimeRange) {
+    if (nextRange.start === uploadTimeRangeDraft.start && nextRange.end === uploadTimeRangeDraft.end) return;
+    const rangeError = uploadTimeRangeError(nextRange.start, nextRange.end);
+    if (rangeError) return showNotice(rangeError);
+    setUploadTimeRangeDraft(nextRange);
+  }
+
+  function submitFilterSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const rangeError = uploadTimeRangeError(uploadTimeRangeDraft.start, uploadTimeRangeDraft.end);
+    if (rangeError) return showNotice(rangeError);
+    prepareFilterChange();
+    setAppliedQuery({ mode: 'filters', status: statusDraft, range: { ...uploadTimeRangeDraft } });
+    setPage(1);
+  }
+
+  function submitPrefixSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextPrefix = queryInput.trim();
+    prepareFilterChange();
+    setQueryInput(nextPrefix);
+    setAppliedQuery({ mode: 'prefix', prefix: nextPrefix });
+    setPage(1);
   }
 
   async function revealKey(row: KeyRow) {
-    const params = new URLSearchParams({ type: storageType, status });
+    const params = new URLSearchParams({ type: row.storageType, status: resultBucket(row.status) });
     const response = await apiFetch(`/api/keys/${row.id}/reveal?${params}`, { cache: 'no-store' });
     if (response.status === 401) return window.location.replace('/login');
     if (!response.ok) return showNotice('无法读取完整密钥');
@@ -111,41 +195,85 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
   }
 
   async function copyKey(row: KeyRow) {
-    const params = new URLSearchParams({ type: storageType, status });
-    const response = await apiFetch(`/api/keys/${row.id}/reveal?${params}`, { cache: 'no-store' });
-    if (response.status === 401) return window.location.replace('/login');
-    if (!response.ok) return showNotice('无法读取完整密钥');
-    const body = await response.json() as { secret: string };
-    await navigator.clipboard.writeText(body.secret);
-    showNotice('密钥已复制');
+    if (busy) return;
+    await copyText((signal) => selectedKeysText([row], apiFetch, signal), 'single', '密钥已复制');
   }
 
-  const cards = [
-    ['可用密钥', summary.valid, '真实调用已通过', '✓', 'bg-emerald-50 text-emerald-600'],
-    ['额度待恢复', summary.recovery, '等待额度恢复', '◷', 'bg-violet-50 text-violet-600'],
-    ['余额不足', summary.insufficient, '等待补充余额', '!', 'bg-amber-50 text-amber-600'],
-    ['不可用', summary.invalid, '验证未通过', '×', 'bg-rose-50 text-rose-600'],
-  ];
+  const selectedRows = keys.filter((row) => selectedKeyIds.has(keySelectionId(row)));
+  const allPageSelected = keys.length > 0 && selectedRows.length === keys.length;
+  const somePageSelected = selectedRows.length > 0 && !allPageSelected;
 
-  const availableTypes = credentialStorageTypes.filter((item) => item.provider === provider);
+  function selectRow(row: KeyRow, checked: boolean) {
+    if (busy || copying) return;
+    setSelectedKeyIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(keySelectionId(row));
+      else next.delete(keySelectionId(row));
+      return next;
+    });
+  }
+
+  function selectPage(checked: boolean) {
+    if (busy || copying) return;
+    setSelectedKeyIds(checked ? new Set(keys.map(keySelectionId)) : new Set());
+  }
+
+  async function copyText(readText: (signal: AbortSignal) => Promise<string>, mode: 'single' | 'batch', successMessage: string) {
+    if (copying || activeCopy.current) return;
+    const controller = new AbortController();
+    activeCopy.current = controller;
+    setCopyMode(mode);
+    try {
+      const text = await readText(controller.signal);
+      if (controller.signal.aborted) return;
+      await navigator.clipboard.writeText(text);
+      if (!controller.signal.aborted) showNotice(successMessage);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (error instanceof BulkCopyError && error.status === 401) return window.location.replace('/login');
+      showNotice(mode === 'batch' ? '批量复制失败，请刷新后重新选择' : '复制失败，请稍后重试');
+    } finally {
+      if (activeCopy.current === controller) {
+        activeCopy.current = null;
+        setCopyMode(null);
+      }
+    }
+  }
+
+  async function copySelectedKeys() {
+    if (busy || selectedRows.length === 0) return;
+    await copyText((signal) => selectedKeysText(selectedRows, apiFetch, signal), 'batch', `已复制 ${selectedRows.length} 条密钥`);
+  }
+
   const visiblePages = paginationItems(page, totalPages);
+  const platform = platformByProvider(provider);
+  const statusByValue = new Map(statuses.map((item) => [item.value, item]));
+  const allStatusCount = statuses.reduce((count, item) => count + item.count, 0);
+  const selectedExportStatuses = statuses.filter((item) => exportStatuses.includes(item.value)).map((item) => item.value);
 
-  function exportHref(targetStatus: ExportStatus) {
-    const params = new URLSearchParams({ status: targetStatus, provider });
+  function statusBadge(value: string) {
+    const item = statusByValue.get(value);
+    return <span className={`status-badge status-${item?.tone ?? 'neutral'}`}>{item?.name ?? value}</span>;
+  }
+
+  function exportHref(targetStatuses: string[]) {
+    const params = new URLSearchParams({ status: targetStatuses.join(','), status_mode: 'exact', provider });
     if (storageType) params.set('type', storageType);
+    addUploadTimeRangeFilter(params, appliedExportRange(appliedQuery));
     return apiUrl(`/api/export?${params}`);
   }
 
   async function confirmExport() {
+    if (exporting || busy || selectedExportStatuses.length === 0) return;
     setExporting(true);
     try {
-      const response = await fetch(exportHref(exportStatus), { cache: 'no-store', credentials: 'include' });
+      const response = await fetch(exportHref(selectedExportStatuses), { cache: 'no-store', credentials: 'include' });
       if (response.status === 401) return window.location.replace('/login');
       if (!response.ok) throw new Error('export failed');
       const blobUrl = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.download = `${storageType || 'keys'}-${exportStatus}.txt`;
+      link.download = exportDownloadName(response.headers.get('Content-Disposition'), `${platform?.slug || 'keys'}-selected.txt`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -160,40 +288,90 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
   }
 
   return (
-    <>
-      <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-5 lg:px-8 lg:py-8">
-        <section aria-label="密钥类型与数据操作" className="mb-5 flex items-end justify-between gap-4 lg:min-h-16">
-          <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-200/80 p-1">{availableTypes.map((item, index) => { const selected = storageType === item.id; return <button key={item.id} type="button" aria-pressed={selected} onClick={() => { setStorageType(item.id); setQueryInput(''); setQuery(''); setPage(1); }} className={`shrink-0 whitespace-nowrap rounded-lg border px-4 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ${selected ? 'border-indigo-600 bg-indigo-600 text-white shadow-[0_4px_10px_rgba(79,70,229,0.28)]' : 'border-transparent bg-transparent text-slate-600 hover:bg-white/60 hover:text-slate-900'}`}>{item.label}{index === 0 && <span className="sr-only">（默认）</span>}</button>; })}</div>
-          <button type="button" onClick={() => window.location.reload()} className="hidden h-10 shrink-0 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 lg:inline-flex">↻ 刷新数据</button>
-        </section>
-
-        <section className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-          {cards.map(([label, value, note, icon, tone]) => <article key={String(label)} className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_35px_rgba(15,23,42,0.04)] sm:p-5"><div className="flex items-start justify-between gap-2"><div><p className="text-xs font-medium text-slate-500 sm:text-sm">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{value}</p></div><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-xl text-sm font-bold sm:h-10 sm:w-10 sm:text-base ${tone}`}>{icon}</span></div><p className="mt-4 hidden text-xs text-slate-400 sm:block">{note}</p></article>)}
-        </section>
-
-        <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
-          <div className="border-b border-slate-100 px-4 pt-4 sm:px-5 sm:pt-5">
-            <div className="flex flex-col gap-3 pb-3 lg:flex-row lg:items-center lg:justify-between">
-              <nav className="flex h-11 gap-6 overflow-x-auto text-sm">{statusTabs.map((tab) => <button key={tab.value} onClick={() => { setStatus(tab.value); setPage(1); }} className={`whitespace-nowrap border-b-2 font-medium ${status === tab.value ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500'}`}>{tab.label}</button>)}</nav>
-              <form onSubmit={submitSearch} className="flex w-full items-center gap-2 lg:max-w-xl"><label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-400"><span>⌕</span><input value={queryInput} onChange={(event) => setQueryInput(event.target.value)} className="w-full bg-transparent text-slate-700 outline-none placeholder:text-slate-400" placeholder="搜索密钥前缀" aria-label="搜索密钥前缀" /></label><button type="submit" disabled={busy} className="h-10 shrink-0 rounded-xl border border-indigo-200 bg-indigo-50 px-4 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-60">搜索</button><button type="button" onClick={() => setExportOpen(true)} className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"><span aria-hidden="true">↓</span>导出</button></form>
-            </div>
+    <ConfigProvider theme={selectionTheme}>
+      <div className="dashboard">
+        <div className="key-type-bar">
+          <div role="group" aria-label="密钥类型" className="key-type-options">
+            {availableStorageTypes.map((item) => <button key={item.id} type="button" aria-pressed={storageType === item.id} onClick={() => changeStorageType(item.id)} className={`key-type-button ${storageType === item.id ? 'is-selected' : ''}`}>{item.label}</button>)}
+          </div>
+          <div className="key-page-actions">
+            <button type="button" disabled={busy || copying || selectedRows.length === 0} onClick={() => void copySelectedKeys()} className="ui-button ui-button--soft bulk-copy-button">{copyMode === 'batch' ? '复制中…' : selectedRows.length > 0 ? `批量复制（${selectedRows.length}）` : '批量复制'}</button>
+            <button type="button" disabled={busy || statuses.length === 0} onClick={() => setExportOpen(true)} className="ui-button ui-button--primary">导出</button>
+            <button type="button" disabled={busy} onClick={() => void loadKeys()} className="ui-button">刷新</button>
+          </div>
+        </div>
+        <section aria-label="密钥列表" className="data-panel">
+          <div className="key-list-toolbar">
+            <form onSubmit={submitFilterSearch} onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.target instanceof HTMLElement && event.target.closest('.upload-time-range')) event.preventDefault();
+            }} aria-label="状态和日期查询" className="key-filter-query">
+              <div className="key-status-field"><CredentialStatusSelect value={statusDraft} disabled={busy} statuses={statuses} total={allStatusCount} onChange={setStatusDraft} /></div>
+              <UploadDateTimeRangePicker value={uploadTimeRangeDraft} onChange={changeUploadTimeRange} />
+              <button type="submit" aria-label="搜索状态和日期" disabled={busy} className="ui-button search-button">搜索</button>
+            </form>
+            <form onSubmit={submitPrefixSearch} aria-label="密钥前缀查询" className="key-prefix-query">
+              <label className="search-field key-prefix-search"><input value={queryInput} onChange={(event) => setQueryInput(event.target.value)} placeholder="搜索密钥前缀" aria-label="搜索密钥前缀" maxLength={32} /></label>
+              <button type="submit" aria-label="搜索密钥前缀" disabled={busy} className="ui-button search-button">搜索</button>
+            </form>
           </div>
 
-          <div className="max-h-[620px] divide-y divide-slate-100 overflow-auto overscroll-contain md:hidden">{busy ? <p className="px-4 py-20 text-center text-sm text-slate-400">正在读取密钥…</p> : keys.length === 0 ? <div className="px-4 py-20 text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-indigo-50 text-xl text-indigo-500">◇</div><p className="mt-4 font-semibold text-slate-700">没有符合条件的密钥</p><p className="mt-1 text-sm text-slate-400">请在桌面端开始检测并上传结果。</p></div> : keys.map((row) => <article key={`${row.id}-${row.keyPrefix}`} className="p-4"><div className="flex items-start justify-between gap-3"><code className="min-w-0 break-all text-xs text-slate-700">{row.keyPrefix}</code><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyle[row.status] || 'bg-slate-100 text-slate-600'}`}>{statusLabel[row.status] || row.status}</span></div><div className="mt-3 flex items-end justify-between gap-3"><div className="min-w-0"><p className="truncate font-mono text-xs text-slate-500">{row.masked}</p><p className="mt-1 text-xs text-slate-400">{row.provider} · {fmt(row.createdAt)}</p></div><div className="flex shrink-0 items-center gap-3"><button onClick={() => void revealKey(row)} className="text-sm font-semibold text-indigo-600">查看</button><button onClick={() => void copyKey(row)} className="text-sm font-semibold text-slate-600">复制</button></div></div></article>)}</div>
-          <div className="hidden max-h-[620px] overflow-auto overscroll-contain md:block"><table className="w-full min-w-[980px] text-left text-sm"><thead className="sticky top-0 z-10 border-b border-slate-100 bg-white text-xs font-semibold uppercase tracking-wide text-slate-400 shadow-[0_1px_0_rgba(226,232,240,0.8)]"><tr>{['密钥前32位', '平台', '密钥（掩码）', '状态', '创建时间', '操作'].map((head) => <th key={head} className="px-5 py-3.5">{head}</th>)}</tr></thead><tbody>
-            {busy ? <tr><td colSpan={6} className="px-5 py-20 text-center text-slate-400">正在读取密钥…</td></tr> : keys.length === 0 ? <tr><td colSpan={6} className="px-5 py-20 text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-indigo-50 text-xl text-indigo-500">◇</div><p className="mt-4 font-semibold text-slate-700">没有符合条件的密钥</p><p className="mt-1 text-sm text-slate-400">请在桌面端开始检测并上传结果。</p></td></tr> : keys.map((row) => <tr key={`${row.id}-${row.keyPrefix}`} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60"><td className="px-5 py-4 font-mono text-xs text-slate-700">{row.keyPrefix}</td><td className="px-5 py-4 font-medium">{row.provider}</td><td className="px-5 py-4 font-mono text-xs text-slate-600">{row.masked}</td><td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyle[row.status] || 'bg-slate-100 text-slate-600'}`}>{statusLabel[row.status] || row.status}</span></td><td className="px-5 py-4 text-xs text-slate-500">{fmt(row.createdAt)}</td><td className="px-5 py-4"><div className="flex items-center gap-3"><button onClick={() => void revealKey(row)} className="font-semibold text-indigo-600">查看</button><button onClick={() => void copyKey(row)} className="font-semibold text-slate-600">复制</button></div></td></tr>)}
-          </tbody></table></div>
-          <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-sm text-slate-500 sm:flex-row"><span>共 {total} 条，每页 100 条</span>{totalPages > 1 && <nav aria-label="密钥列表分页" className="flex items-center gap-1"><button aria-label="上一页" disabled={page <= 1 || busy} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white text-base font-medium text-slate-600 disabled:cursor-not-allowed disabled:opacity-40">‹</button>{visiblePages.map((item) => typeof item === 'number' ? <button key={item} aria-current={item === page ? 'page' : undefined} onClick={() => setPage(item)} className={`grid h-9 min-w-9 place-items-center rounded-lg px-2 text-sm font-semibold ${item === page ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200' : 'border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600'}`}>{item}</button> : <span key={item} className="grid h-9 w-8 place-items-center text-slate-400">…</span>)}<button aria-label="下一页" disabled={page >= totalPages || busy} onClick={() => setPage((value) => Math.min(totalPages, value + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white text-base font-medium text-slate-600 disabled:cursor-not-allowed disabled:opacity-40">›</button></nav>}</div>
+          <div className="mobile-key-list">
+            {!busy && keys.length > 0 && <div className="mobile-selection-bar"><Checkbox checked={allPageSelected} indeterminate={somePageSelected} disabled={copying} aria-label="全选本页密钥" onChange={(event) => selectPage(event.target.checked)}>全选本页</Checkbox><span>已选 {selectedRows.length} 条</span></div>}
+            {busy ? <p role="status" className="loading-message">正在读取密钥…</p> : error ? <p role="alert" className="loading-message">{error}</p> : keys.length === 0 ? <EmptyState /> : keys.map((row) => (
+              <article key={keySelectionId(row)} className={`mobile-data-row${selectedKeyIds.has(keySelectionId(row)) ? ' is-selected' : ''}`}>
+                <div className="mobile-row-heading"><div className="mobile-row-key"><Checkbox aria-label={`选择密钥 ${row.keyPrefix}`} checked={selectedKeyIds.has(keySelectionId(row))} disabled={copying} onChange={(event) => selectRow(row, event.target.checked)} /><code className="key-prefix">{row.keyPrefix}</code></div>{statusBadge(row.status)}</div>
+                <div className="mobile-row-footer">
+                  <div className="mobile-row-details"><p className="key-mask">{row.masked}</p><p className="key-upload-ip">IP 地址：{row.ipAddress ?? '—'}</p><p>上传时间：{fmt(row.createdAt)}</p><p>更新时间：{fmt(row.updatedAt)}</p></div>
+                  <div className="row-actions"><button type="button" onClick={() => void revealKey(row)} className="text-action">查看</button><button type="button" disabled={copying} onClick={() => void copyKey(row)} className="text-action">复制</button></div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div className="table-scroll">
+            <table className="workspace-table dashboard-key-table">
+              <thead><tr><th scope="col" className="key-select-cell"><Checkbox aria-label="全选本页密钥" checked={allPageSelected} indeterminate={somePageSelected} disabled={busy || copying || keys.length === 0} onChange={(event) => selectPage(event.target.checked)} /></th>{['密钥前32位', '状态', 'IP 地址', '上传时间', '更新时间', '操作'].map((head) => <th key={head} scope="col">{head}</th>)}</tr></thead>
+              <tbody>
+                {busy ? <tr className="empty-table-row"><td colSpan={7}><p role="status" className="loading-message">正在读取密钥…</p></td></tr> : error ? <tr className="empty-table-row"><td colSpan={7}><p role="alert" className="loading-message">{error}</p></td></tr> : keys.length === 0 ? <tr className="empty-table-row"><td colSpan={7}><EmptyState /></td></tr> : keys.map((row) => (
+                  <tr key={keySelectionId(row)} className={selectedKeyIds.has(keySelectionId(row)) ? 'is-selected' : undefined}>
+                    <td className="key-select-cell"><Checkbox aria-label={`选择密钥 ${row.keyPrefix}`} checked={selectedKeyIds.has(keySelectionId(row))} disabled={busy || copying} onChange={(event) => selectRow(row, event.target.checked)} /></td>
+                    <td><code className="key-prefix">{row.keyPrefix}</code><code className="key-mask">{row.masked}</code></td>
+                    <td>{statusBadge(row.status)}</td>
+                    <td className="cell-muted key-upload-ip">{row.ipAddress ?? '—'}</td>
+                    <td className="cell-muted">{fmt(row.createdAt)}</td>
+                    <td className="cell-muted">{fmt(row.updatedAt)}</td>
+                    <td><div className="row-actions"><button type="button" aria-label="查看密钥" title="查看密钥" onClick={() => void revealKey(row)} className="text-action">查看</button><button type="button" aria-label="复制密钥" title="复制密钥" disabled={copying} onClick={() => void copyKey(row)} className="text-action">复制</button></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="panel-footer">
+            <span>显示 {total ? (page - 1) * 100 + 1 : 0}–{Math.min(page * 100, total)} 条，共 {total} 条</span>
+            {totalPages > 1 && <nav aria-label="密钥列表分页" className="pagination">
+              <button type="button" aria-label="上一页" disabled={page <= 1 || busy} onClick={() => changePage(Math.max(1, page - 1))}>上一页</button>
+              {visiblePages.map((item) => typeof item === 'number' ? <button type="button" key={item} disabled={busy} aria-current={item === page ? 'page' : undefined} onClick={() => changePage(item)}>{item}</button> : <span key={item}>…</span>)}
+              <button type="button" aria-label="下一页" disabled={page >= totalPages || busy} onClick={() => changePage(Math.min(totalPages, page + 1))}>下一页</button>
+            </nav>}
+          </div>
         </section>
       </div>
 
-      {reveal && <Modal title="完整密钥" close={() => setReveal(null)}><p className="mb-3 text-xs text-slate-500">{reveal.masked}</p><textarea readOnly value={reveal.secret} className="h-40 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs outline-none" /><button onClick={async () => { await navigator.clipboard.writeText(reveal.secret); showNotice('完整密钥已复制'); }} className="mt-4 w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white">复制完整密钥</button></Modal>}
-      {exportOpen && <Modal title="导出密钥" close={() => { if (!exporting) setExportOpen(false); }}><p className="mb-4 text-sm leading-6 text-slate-500">请选择要导出的密钥范围。导出内容仅包含当前平台和当前密钥类型，文件格式为 TXT。</p><div role="radiogroup" aria-label="导出范围" className="grid gap-2 sm:grid-cols-2">{exportOptions.map((option) => { const selected = exportStatus === option.value; return <label key={option.value} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition ${selected ? 'border-indigo-300 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'}`}><input type="radio" name="export-status" value={option.value} checked={selected} onChange={() => setExportStatus(option.value)} className="sr-only" /><span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] ${selected ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}>✓</span>{option.label}</label>; })}</div><div className="mt-6 flex justify-end gap-2"><button type="button" disabled={exporting} onClick={() => setExportOpen(false)} className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">取消</button><button type="button" disabled={exporting} onClick={() => void confirmExport()} className="h-10 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">{exporting ? '正在导出…' : '确认导出'}</button></div></Modal>}
-      {notice && <div role="status" className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-medium text-white shadow-xl">{notice}</div>}
-    </>
+      {reveal && <Modal title="完整密钥" close={() => setReveal(null)}>
+        <p className="modal-description">{reveal.masked}</p>
+        <textarea readOnly value={reveal.secret} className="ui-input secret-textarea" aria-label="完整密钥" />
+        <button type="button" disabled={copying} onClick={() => void copyText(async () => reveal.secret, 'single', '完整密钥已复制')} className="ui-button ui-button--primary ui-button--block">复制完整密钥</button>
+      </Modal>}
+      {exportOpen && <Modal title="导出密钥" showClose={false} close={() => { if (!exporting) setExportOpen(false); }}>
+        <div role="group" aria-label="导出范围" className="export-options">
+          {statuses.map((option) => <label key={option.value} className={`export-option ${exportStatuses.includes(option.value) ? 'is-selected' : ''} ${exporting ? 'is-disabled' : ''}`}><input type="checkbox" name="export-status" value={option.value} disabled={exporting || busy} checked={exportStatuses.includes(option.value)} onChange={(event) => {
+            const checked = event.target.checked;
+            setExportStatuses((current) => checked ? [...current, option.value] : current.filter((value) => value !== option.value));
+          }} /><span className="export-option-name">{option.name}</span><span className="export-option-count">{option.count}</span></label>)}
+        </div>
+        {statuses.length === 0 && <p role="status" className="modal-description">{busy ? '正在读取导出范围…' : '暂无可导出的状态，请刷新重试。'}</p>}
+        <div className="modal-actions"><button type="button" disabled={exporting} onClick={() => setExportOpen(false)} className="ui-button">取消</button><button type="button" disabled={exporting || busy || selectedExportStatuses.length === 0} onClick={() => void confirmExport()} className="ui-button ui-button--primary">{exporting ? '正在导出…' : '确认导出'}</button></div>
+      </Modal>}
+      {notice && <div role="status" className="toast">{notice}</div>}
+    </ConfigProvider>
   );
-}
-
-function Modal({ title, close, children }: { title: string; close: () => void; children: React.ReactNode }) {
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section role="dialog" aria-modal="true" aria-label={title} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-semibold">{title}</h2><button onClick={close} aria-label="关闭" className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-slate-500">×</button></div>{children}</section></div>;
 }

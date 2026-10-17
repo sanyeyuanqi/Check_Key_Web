@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import AwareDatetime
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,18 +30,24 @@ from .credential_service import (
     list_credentials,
     process_batch_results,
     reveal_credential,
+    reveal_credentials,
     start_batch,
 )
 from .database import AuthUser, SessionFactory, get_session
+from .export_service import export_filename, list_export_records, normalize_export_status, record_export
 from .queue import enqueue_results, is_burst, redis_client
+from .request_context import client_ip
 from .schemas import (
     BatchCompleteInput,
+    BatchRevealInput,
     BatchStartInput,
     LoginInput,
     ManagedUserAction,
     ManagedUserInput,
 )
 from .security import stable_node_id
+from .status_service import list_credential_statuses, normalize_exact_export_status
+from .valid_key_service import list_valid_key_records
 
 
 @asynccontextmanager
@@ -56,6 +64,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "X-Node-Id"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -86,6 +95,17 @@ async def redis_dependency() -> Redis:
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 RedisDep = Annotated[Redis, Depends(redis_dependency)]
+
+
+def created_range_options(
+    created_from: datetime | None, created_before: datetime | None,
+) -> dict[str, datetime]:
+    if created_from is not None and created_before is not None and created_from >= created_before:
+        raise HTTPException(status_code=422, detail="开始日期必须早于结束日期")
+    return {
+        key: value for key, value in {"created_from": created_from, "created_before": created_before}.items()
+        if value is not None
+    }
 
 
 async def require_user(request: Request, session: SessionDep) -> AuthUser:
@@ -182,15 +202,50 @@ async def keys_list(
     storage_type: Annotated[str | None, Query(alias="type")] = None,
     q: str | None = None,
     page: int = 1,
+    status_mode: Literal["bucket", "exact"] = "bucket",
+    created_from: AwareDatetime | None = None,
+    created_before: AwareDatetime | None = None,
 ) -> dict[str, object]:
+    prefix_search = bool(q and q.strip())
+    date_options = {} if prefix_search else created_range_options(created_from, created_before)
     return await list_credentials(
         session,
-        status=status,
+        status="all" if prefix_search else status,
         provider=provider,
         storage_type=storage_type,
         query=q,
         page=page,
+        status_mode=status_mode,
+        **date_options,
     )
+
+
+@app.get("/api/credential-statuses")
+async def credential_statuses_list(
+    session: SessionDep,
+    _: Annotated[AuthUser, Depends(require_user)],
+    provider: str | None = None,
+    storage_type: Annotated[str | None, Query(alias="type")] = None,
+    created_from: AwareDatetime | None = None,
+    created_before: AwareDatetime | None = None,
+) -> JSONResponse:
+    statuses = await list_credential_statuses(
+        session, provider=provider, storage_type=storage_type,
+        **created_range_options(created_from, created_before),
+    )
+    return JSONResponse({"statuses": statuses}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/keys/batch-reveal")
+async def keys_batch_reveal(
+    payload: BatchRevealInput,
+    request: Request,
+    session: SessionDep,
+    _: Annotated[AuthUser, Depends(require_user)],
+) -> JSONResponse:
+    ensure_trusted_origin(request)
+    secrets = await reveal_credentials(session, payload.keys)
+    return JSONResponse({"secrets": secrets}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/keys/{credential_id}/reveal")
@@ -204,36 +259,78 @@ async def key_reveal(
     return {"secret": await reveal_credential(session, credential_id, storage_type, status)}
 
 
-@app.get("/api/export")
-async def keys_export(
+@app.get("/api/valid-key-records")
+async def valid_key_records_list(
     session: SessionDep,
     _: Annotated[AuthUser, Depends(require_user)],
-    status: str,
-    provider: str | None = None,
-    storage_type: Annotated[str | None, Query(alias="type")] = None,
+    provider: Annotated[str | None, Query(max_length=80)] = None,
+    storage_type: Annotated[str | None, Query(alias="type", max_length=64)] = None,
+    q: str | None = None,
+    ip: Annotated[str | None, Query(max_length=80)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+) -> JSONResponse:
+    ip_options = {"ip": ip} if ip is not None else {}
+    body = await list_valid_key_records(session, provider=provider, storage_type=storage_type, query=q, page=page, **ip_options)
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/export")
+async def keys_export(
+    request: Request,
+    session: SessionDep,
+    user: Annotated[AuthUser, Depends(require_user)],
+    status: Annotated[str, Query(max_length=8192)],
+    provider: Annotated[str | None, Query(max_length=80)] = None,
+    storage_type: Annotated[str | None, Query(alias="type", max_length=64)] = None,
+    status_mode: Literal["bucket", "exact"] = "bucket",
+    created_from: AwareDatetime | None = None,
+    created_before: AwareDatetime | None = None,
 ) -> PlainTextResponse:
-    if status not in {"all", "valid", "usage_limit_reached", "insufficient_credit", "invalid"}:
-        raise HTTPException(status_code=400, detail="不支持的导出状态")
+    date_options = created_range_options(created_from, created_before)
+    try:
+        status = await normalize_exact_export_status(session, status) if status_mode == "exact" else normalize_export_status(status)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     values = await export_credentials(
         session,
         status=status,
         provider=provider,
         storage_type=storage_type,
+        **({"status_mode": "exact"} if status_mode == "exact" else {}),
+        **date_options,
     )
-    filenames = {
-        "all": "all-keys.txt",
-        "valid": "all-valid-keys.txt",
-        "usage_limit_reached": "all-usage-limit-reached-keys.txt",
-        "insufficient_credit": "all-insufficient-credit-keys.txt",
-        "invalid": "all-invalid-keys.txt",
-    }
+    file_name = export_filename(provider, status, **date_options)
+    content = "\n".join(values)
+    await record_export(
+        session, user=user, provider=provider, storage_type=storage_type,
+        status=status, count=len(values), file_name=file_name,
+        ip_address=client_ip(request),
+        **({"status_mode": "exact"} if status_mode == "exact" else {}),
+    )
     return PlainTextResponse(
-        "\n".join(values),
+        content,
         headers={
-            "Content-Disposition": f'attachment; filename="{filenames[status]}"',
+            "Content-Disposition": f'attachment; filename="{file_name}"',
             "Cache-Control": "no-store",
         },
     )
+
+
+@app.get("/api/export-records")
+async def export_records_list(
+    session: SessionDep,
+    user: Annotated[AuthUser, Depends(require_user)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    username: Annotated[str | None, Query(max_length=32)] = None,
+    ip: Annotated[str | None, Query(max_length=80)] = None,
+) -> JSONResponse:
+    filter_options = {}
+    if username is not None:
+        filter_options["username"] = username
+    if ip is not None:
+        filter_options["ip"] = ip
+    body = await list_export_records(session, user=user, page=page, **filter_options)
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/device/ping")
@@ -258,11 +355,12 @@ async def device_batch_complete(
     redis: RedisDep,
 ) -> JSONResponse:
     node_id = request_node_id(request)
+    source_ip = client_ip(request)
     if await is_burst(redis, node_id):
-        job_id = await enqueue_results(redis, batch_id, [item.model_dump() for item in payload.results])
+        job_id = await enqueue_results(redis, batch_id, [item.model_dump() for item in payload.results], source_ip=source_ip)
         return JSONResponse(
             {"ok": True, "accepted": len(payload.results), "queued": True, "job_id": job_id},
             status_code=202,
         )
-    accepted = await process_batch_results(session, batch_id, payload.results)
+    accepted = await process_batch_results(session, batch_id, payload.results, source_ip=source_ip)
     return JSONResponse({"ok": True, "accepted": accepted, "queued": False})

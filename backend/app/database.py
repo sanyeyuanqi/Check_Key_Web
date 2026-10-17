@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     String,
@@ -65,19 +66,62 @@ class AuthLoginAttempt(Base):
     )
 
 
+class ExportRecord(Base):
+    __tablename__ = "export_records"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("auth_users.id", ondelete="SET NULL"))
+    username: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(80))
+    storage_type: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    status_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="bucket", server_default="bucket")
+    credential_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(45))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_export_records_created", created_at.desc(), id.desc()),
+        Index("idx_export_records_user_created", "user_id", created_at.desc(), id.desc()),
+    )
+
+
+class CredentialStatus(Base):
+    __tablename__ = "credential_statuses"
+
+    value: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    tone: Mapped[str] = mapped_column(String(24), nullable=False, default="neutral", server_default="neutral")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1000, server_default="1000")
+
+
+class CredentialRegistry(Base):
+    __tablename__ = "credential_registry"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    storage_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("storage_type", "fingerprint", name="uq_credential_registry_type_fingerprint"),
+    )
+
+
 class Credential(Base):
     __tablename__ = "credentials"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    provider: Mapped[str] = mapped_column(String(80), primary_key=True)
     kind: Mapped[str] = mapped_column(String(80), nullable=False)
     encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False)
     key_prefix: Mapped[str] = mapped_column(String(32), nullable=False)
     masked: Mapped[str] = mapped_column(String(300), nullable=False)
     category: Mapped[str] = mapped_column(String(80), nullable=False, default="未分类")
-    status: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(80), ForeignKey("credential_statuses.value", name="fk_credentials_status"), nullable=False)
     result_bucket: Mapped[str] = mapped_column(String(32), nullable=False)
     usable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     model: Mapped[str | None] = mapped_column(String(300))
@@ -88,19 +132,39 @@ class Credential(Base):
     message: Mapped[str | None] = mapped_column(Text)
     reset_at: Mapped[str | None] = mapped_column(String(120))
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="desktop")
+    source_ip: Mapped[str | None] = mapped_column(String(45))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("storage_type", "fingerprint", name="uq_credentials_type_fingerprint"),
+        UniqueConstraint("provider", "storage_type", "fingerprint", name="uq_credentials_type_fingerprint"),
         Index("idx_credentials_type_bucket_created", "storage_type", "result_bucket", created_at.desc()),
         Index("idx_credentials_provider_created", "provider", created_at.desc()),
+        Index("idx_credentials_type_status_created", "storage_type", "status", created_at.desc()),
         Index(
             "idx_credentials_prefix_created",
             "key_prefix",
             created_at.desc(),
             postgresql_ops={"key_prefix": "varchar_pattern_ops"},
         ),
+        Index(
+            "idx_credentials_status_created",
+            "status",
+            created_at.desc(),
+        ),
+        {"postgresql_partition_by": "LIST (provider)"},
+    )
+
+
+class ValidKeyRecord(Base):
+    __tablename__ = "valid_key_records"
+
+    credential_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("credential_registry.id", name="fk_valid_key_records_registry"), primary_key=True)
+    first_valid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_valid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("idx_valid_key_records_recent", last_valid_at.desc(), credential_id.desc()),
     )
 
 
@@ -127,9 +191,9 @@ class ValidationBatchItem(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("validation_batches.id", ondelete="CASCADE"), nullable=False)
-    credential_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("credentials.id", ondelete="CASCADE"), nullable=False)
+    credential_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("credential_registry.id", name="fk_batch_items_registry", ondelete="CASCADE"), nullable=False)
     item_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(80), ForeignKey("credential_statuses.value", name="fk_batch_items_status"), nullable=False)
     result_bucket: Mapped[str] = mapped_column(String(32), nullable=False)
 
     __table_args__ = (

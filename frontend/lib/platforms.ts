@@ -1,10 +1,14 @@
 export const platformOptions = [
-  { slug: 'aws', provider: 'AWS Bedrock', title: 'AWS', subtitle: 'Amazon Bedrock', mark: 'A', tone: 'bg-amber-500 shadow-amber-200' },
-  { slug: 'anthropic', provider: 'Anthropic', title: 'Anthropic', subtitle: 'Claude 官方', mark: 'A', tone: 'bg-[#dc7d61] shadow-orange-200' },
-  { slug: 'openai', provider: 'OpenAI', title: 'OpenAI', subtitle: 'GPT 官方', mark: 'O', tone: 'bg-emerald-600 shadow-emerald-200' },
-  { slug: 'azure', provider: 'Azure', title: 'Azure', subtitle: 'Microsoft Azure', mark: 'A', tone: 'bg-sky-600 shadow-sky-200' },
-  { slug: 'google', provider: 'Google', title: 'Google', subtitle: 'Gemini / Vertex', mark: 'G', tone: 'bg-blue-500 shadow-blue-200' },
-  { slug: 'openrouter', provider: 'OpenRouter', title: 'OpenRouter', subtitle: 'Claude / K3', mark: 'O', tone: 'bg-violet-600 shadow-violet-200' },
+  { slug: 'anthropic', provider: 'Anthropic', title: 'Anthropic', subtitle: 'Claude 官方', mark: 'A', tone: 'platform-mark-anthropic' },
+  { slug: 'aws', provider: 'AWS Bedrock', title: 'AWS', subtitle: 'Amazon Bedrock', mark: 'A', tone: 'platform-mark-aws' },
+  { slug: 'azure', provider: 'Azure', title: 'Azure', subtitle: 'Microsoft Azure', mark: 'A', tone: 'platform-mark-azure' },
+  { slug: 'openai', provider: 'OpenAI', title: 'OpenAI', subtitle: 'GPT 官方', mark: 'O', tone: 'platform-mark-openai' },
+  { slug: 'google', provider: 'Google', title: 'Google', subtitle: 'Gemini / Vertex', mark: 'G', tone: 'platform-mark-google' },
+  { slug: 'openrouter', provider: 'OpenRouter', title: 'OpenRouter', subtitle: 'Claude / K3', mark: 'O', tone: 'platform-mark-openrouter' },
+  { slug: 'tokenrouter', provider: 'TokenRouter', title: 'TokenRouter', subtitle: 'Claude / Models', mark: 'T', tone: 'platform-mark-tokenrouter' },
+  { slug: 'vercel', provider: 'Vercel', title: 'Vercel', subtitle: 'Claude / AI Gateway', mark: 'V', tone: 'platform-mark-vercel' },
+  { slug: 'cloudflare', provider: 'Cloudflare', title: 'Cloudflare', subtitle: 'Workers AI', mark: 'C', tone: 'platform-mark-cloudflare' },
+  { slug: 'opencode', provider: 'OpenCode', title: 'OpenCode', subtitle: 'Claude / Zen', mark: 'O', tone: 'platform-mark-opencode' },
 ] as const;
 
 export type PlatformOption = (typeof platformOptions)[number];

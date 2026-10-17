@@ -1,0 +1,164 @@
+.workspace .workspace-sidebar {
+  box-sizing: border-box;
+  width: 232px;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  border-right-color: #e7ede9;
+  background: #fff;
+  padding: 20px 14px max(14px, env(safe-area-inset-bottom));
+}
+
+.workspace .workspace-sidebar .platform-navigation {
+  min-height: 0;
+  flex: 1 1 0;
+  gap: 0;
+  overscroll-behavior: contain;
+  padding: 2px 2px 8px;
+}
+
+.workspace .workspace-sidebar .navigation-group {
+  gap: 3px;
+}
+
+.workspace .workspace-sidebar .navigation-group + .navigation-group {
+  margin-top: 12px;
+  border-top-color: #edf1ee;
+  padding-top: 12px;
+}
+
+.workspace .workspace-sidebar .platform-link {
+  min-height: 42px;
+  gap: 11px;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #657d71;
+  font-size: 12px;
+  line-height: 20px;
+  transition: background-color .15s ease, color .15s ease;
+}
+
+.workspace .workspace-sidebar .platform-link > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace .workspace-sidebar .platform-link::before {
+  position: absolute;
+  inset: 12px auto 12px 2px;
+  width: 3px;
+  border-radius: 2px;
+  background: transparent;
+  content: '';
+}
+
+.workspace .workspace-sidebar .platform-link:hover {
+  background: #f4f8f5;
+  color: #3d6654;
+}
+
+.workspace .workspace-sidebar .platform-link.is-selected {
+  background: #eaf4ee;
+  color: #167457;
+  font-weight: 600;
+}
+
+.workspace .workspace-sidebar .platform-link.is-selected:hover {
+  background: #e3f0e8;
+}
+
+.workspace .workspace-sidebar .platform-link.is-selected::before {
+  background: #278766;
+}
+
+.workspace .workspace-sidebar .sidebar-user {
+  display: grid;
+  min-height: 64px;
+  flex-shrink: 0;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid #e7eee9;
+  border-radius: 10px;
+  background: #f7faf8;
+  padding: 10px;
+}
+
+.workspace .workspace-sidebar .sidebar-user-avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #dae7df;
+  border-radius: 9px;
+  background: #e6efe9;
+  color: #4a725d;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.workspace .workspace-sidebar .user-copy p {
+  color: #3a5748;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.workspace .workspace-sidebar .user-copy span {
+  margin-top: 2px;
+  color: #8a9b90;
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+.workspace .workspace-sidebar .logout-button {
+  min-width: 40px;
+  min-height: 32px;
+  border: 1px solid #e1e9e3;
+  border-radius: 7px;
+  background: #fff;
+  padding: 5px 7px;
+  color: #738b7b;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.workspace .workspace-sidebar .logout-button:hover:not(:disabled) {
+  border-color: #c8dacd;
+  background: #eef5f0;
+  color: #236d54;
+}
+
+.workspace .workspace-sidebar :is(a, button):focus-visible {
+  outline: 2px solid #78b29b;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1023px) {
+  .workspace .workspace-sidebar {
+    padding-top: 14px;
+  }
+
+  .workspace .workspace-sidebar.is-open {
+    box-shadow: 12px 0 40px rgb(25 47 37 / 10%);
+  }
+
+  .workspace .workspace-sidebar .sidebar-close {
+    min-height: 32px;
+    flex-shrink: 0;
+    margin-bottom: 10px;
+    border-radius: 8px;
+    background: #f5f8f6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace .workspace-sidebar .platform-link {
+    transition: none;
+  }
+}

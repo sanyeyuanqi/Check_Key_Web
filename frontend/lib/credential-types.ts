@@ -1,14 +1,19 @@
 export const credentialStorageTypes = [
   { id: 'anthropic_official', table: 'anthropic_keys', provider: 'Anthropic', label: 'Anthropic 官Key' },
+  { id: 'anthropic_enterprise_subscription', table: 'anthropic_enterprise_subscription_keys', provider: 'Anthropic', label: 'Claude 企业订阅号' },
   { id: 'aws_bedrock_api', table: 'aws_bedrock_api_keys', provider: 'AWS Bedrock', label: 'Bedrock API Key' },
   { id: 'aws_access', table: 'aws_access_keys', provider: 'AWS Bedrock', label: 'AWS Access Key' },
   { id: 'openai_official', table: 'openai_keys', provider: 'OpenAI', label: 'OpenAI 官Key' },
   { id: 'openrouter', table: 'openrouter_keys', provider: 'OpenRouter', label: 'OpenRouter' },
+  { id: 'tokenrouter', table: 'tokenrouter_keys', provider: 'TokenRouter', label: 'TokenRouter' },
+  { id: 'vercel', table: 'vercel_keys', provider: 'Vercel', label: 'Vercel AI Gateway' },
   { id: 'azure_gpt', table: 'azure_gpt_keys', provider: 'Azure', label: 'AZ GPT' },
   { id: 'azure_claude', table: 'azure_claude_keys', provider: 'Azure', label: 'AZ Claude' },
   { id: 'google_ai_studio_gemini', table: 'google_ai_studio_gemini_keys', provider: 'Google', label: 'AI Studio · Gemini' },
   { id: 'google_vertex_gemini', table: 'google_vertex_gemini_keys', provider: 'Google', label: 'Vertex AI · Gemini' },
   { id: 'google_vertex_claude', table: 'google_vertex_claude_keys', provider: 'Google', label: 'Vertex AI · Claude' },
+  { id: 'cloudflare_workers_ai', table: 'cloudflare_workers_ai_keys', provider: 'Cloudflare', label: 'Cloudflare Workers AI' },
+  { id: 'opencode_zen', table: 'opencode_zen_keys', provider: 'OpenCode', label: 'OpenCode Zen' },
 ] as const;
 
 export type CredentialStorageType = typeof credentialStorageTypes[number]['id'];
@@ -39,11 +44,16 @@ export function storageConfig(value: string | null | undefined): CredentialStora
 }
 
 export function inferStorageType(provider: string, kind: string, model?: string | null): CredentialStorageType {
+  if (provider === 'OpenCode' || kind === 'opencode') return 'opencode_zen';
+  if (provider === 'Cloudflare' || kind === 'cloudflare') return 'cloudflare_workers_ai';
+  if (kind === 'anthropic_oauth') return 'anthropic_enterprise_subscription';
   if (provider === 'Anthropic' || kind === 'anthropic') return 'anthropic_official';
   if (kind === 'bedrock_api_key') return 'aws_bedrock_api';
   if (kind === 'aws_access_key') return 'aws_access';
   if (provider === 'OpenAI' || kind === 'openai') return 'openai_official';
   if (provider === 'OpenRouter' || kind === 'openrouter') return 'openrouter';
+  if (provider === 'TokenRouter' || kind === 'tokenrouter') return 'tokenrouter';
+  if (provider === 'Vercel' || kind === 'vercel') return 'vercel';
   if (provider === 'Azure' || kind === 'azure') return model?.toLowerCase().startsWith('claude-') ? 'azure_claude' : 'azure_gpt';
   if (kind === 'google_ai_studio') return 'google_ai_studio_gemini';
   if (kind.startsWith('google_vertex_')) return model?.toLowerCase().startsWith('claude-') ? 'google_vertex_claude' : 'google_vertex_gemini';

@@ -19,8 +19,10 @@ async def is_burst(redis: Redis, node_id: str) -> bool:
     return int(count) > settings.burst_request_limit
 
 
-async def enqueue_results(redis: Redis, batch_id: int, results: list[dict[str, Any]]) -> str:
-    payload = encrypt_job({"batch_id": batch_id, "results": results})
+async def enqueue_results(
+    redis: Redis, batch_id: int, results: list[dict[str, Any]], *, source_ip: str | None = None,
+) -> str:
+    payload = encrypt_job({"batch_id": batch_id, "results": results, "source_ip": source_ip})
     message_id = await redis.xadd(
         settings.redis_stream_name,
         {"payload": payload},
