@@ -35,8 +35,14 @@ export default function AppShell({ currentUser, onRefresh, children }: {
           <div role="group" aria-label="服务平台" className="navigation-group">
             {platformOptions.map((item) => {
               const selected = activeItem === item.slug;
+              const href = `/platform/${item.slug}`;
               return (
-                <Link key={item.slug} href={`/platform/${item.slug}`} aria-current={selected ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${selected ? 'is-selected' : ''}`}>
+                <Link key={item.slug} href={href} prefetch={false} aria-current={selected ? 'page' : undefined} onClick={() => setOpen(false)} onMouseEnter={() => { if (!pathname.startsWith('/platform/')) router.prefetch(href); }} onFocus={() => { if (!pathname.startsWith('/platform/')) router.prefetch(href); }} onNavigate={(event) => {
+                  if (!pathname.startsWith('/platform/')) return;
+                  // Platform pages share one client view; pathname changes update its provider immediately.
+                  event.preventDefault();
+                  if (!selected) window.history.pushState(null, '', href);
+                }} className={`platform-link ${selected ? 'is-selected' : ''}`}>
                   <SidebarBrandIcon slug={item.slug} />
                   <span>{item.slug === 'aws' ? 'AWS Bedrock' : item.title}</span>
                 </Link>
@@ -44,9 +50,9 @@ export default function AppShell({ currentUser, onRefresh, children }: {
             })}
           </div>
           <div role="group" aria-label="管理功能" className="navigation-group">
-            {currentUser.role === 'admin' && <Link href="/accounts" aria-current={activeItem === 'accounts' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link accounts-link ${activeItem === 'accounts' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="accounts" /><span>账号管理</span></Link>}
-            <Link href="/export-records" aria-current={activeItem === 'export-records' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${activeItem === 'export-records' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="export-records" /><span>导出记录</span></Link>
-            <Link href="/valid-key-records" aria-current={activeItem === 'valid-key-records' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${activeItem === 'valid-key-records' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="valid-key-records" /><span>有效密钥记录</span></Link>
+            {currentUser.role === 'admin' && <Link href="/accounts" prefetch={false} onMouseEnter={() => router.prefetch('/accounts')} onFocus={() => router.prefetch('/accounts')} aria-current={activeItem === 'accounts' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link accounts-link ${activeItem === 'accounts' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="accounts" /><span>账号管理</span></Link>}
+            <Link href="/export-records" prefetch={false} onMouseEnter={() => router.prefetch('/export-records')} onFocus={() => router.prefetch('/export-records')} aria-current={activeItem === 'export-records' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${activeItem === 'export-records' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="export-records" /><span>导出记录</span></Link>
+            <Link href="/valid-key-records" prefetch={false} onMouseEnter={() => router.prefetch('/valid-key-records')} onFocus={() => router.prefetch('/valid-key-records')} aria-current={activeItem === 'valid-key-records' ? 'page' : undefined} onClick={() => setOpen(false)} className={`platform-link ${activeItem === 'valid-key-records' ? 'is-selected' : ''}`}><SidebarUtilityIcon name="valid-key-records" /><span>有效密钥记录</span></Link>
           </div>
         </nav>
         <div className="sidebar-user">
