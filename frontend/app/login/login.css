@@ -8,8 +8,8 @@
   padding: 16px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: rgb(0 0 0 / 88%);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
+  font-family: inherit;
+  font-size: 15px;
   line-height: 1.5714285714;
 }
 .login-card { width: 100%; max-width: 400px; border: 1px solid #f0f0f0; border-radius: 12px; background: #fff; padding: 40px 32px; box-shadow: 0 8px 32px rgb(0 0 0 / 15%); }
@@ -26,17 +26,17 @@
 .login-field-icon { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; align-items: center; justify-content: center; }
 .login-field-icon svg, .login-password-toggle svg { display: block; width: 16px; height: 16px; }
 .login-input { width: 100%; min-width: 0; height: 24px; flex: 1; border: 0; border-radius: 0; background: transparent; padding: 0; color: rgb(0 0 0 / 88%); font-size: 16px; line-height: 24px; outline: none; }
-.login-input::placeholder { color: rgb(0 0 0 / 25%); opacity: 1; }
+.login-input::placeholder { color: #65776b; opacity: 1; }
 .login-input:focus-visible { outline: none; }
-.login-input:disabled { color: rgb(0 0 0 / 25%); }
-.login-password-toggle { display: inline-flex; width: 16px; height: 24px; flex: 0 0 16px; align-items: center; justify-content: center; border: 0; background: transparent; margin-left: 4px; padding: 0; color: rgb(0 0 0 / 45%); }
+.login-input:disabled { color: #596e62; }
+.login-password-toggle { display: inline-flex; width: 16px; height: 24px; flex: 0 0 16px; align-items: center; justify-content: center; border: 0; background: transparent; margin-left: 4px; padding: 0; color: #596e62; }
 .login-password-toggle:hover:not(:disabled) { color: rgb(0 0 0 / 88%); }
-.login-submit { display: inline-flex; width: 100%; height: 40px; flex-shrink: 0; align-items: center; justify-content: center; border: 1px solid #1677ff; border-radius: 8px; background: #1677ff; padding: 6px 15px; color: #fff; font-size: 16px; font-weight: 400; line-height: 24px; box-shadow: 0 2px 0 rgb(5 145 255 / 10%); transition: background .2s, border-color .2s; }
-.login-submit:hover:not(:disabled) { border-color: #4096ff; background: #4096ff; }
+.login-submit { display: inline-flex; width: 100%; height: 40px; flex-shrink: 0; align-items: center; justify-content: center; border: 1px solid #1266d6; border-radius: 8px; background: #1266d6; padding: 6px 15px; color: #fff; font-size: 16px; font-weight: 600; line-height: 24px; box-shadow: 0 2px 0 rgb(5 145 255 / 10%); transition: background .2s, border-color .2s; }
+.login-submit:hover:not(:disabled) { border-color: #0958d9; background: #0958d9; }
 .login-submit:active:not(:disabled) { border-color: #0958d9; background: #0958d9; }
-.login-submit:disabled { cursor: wait; opacity: .65; }
+.login-submit:disabled { cursor: wait; border-color: #dce5e0; background: #f1f5f2; color: #596e62; opacity: 1; }
 .login-page button:focus-visible { outline: 2px solid #1677ff; outline-offset: 3px; }
-.login-error { margin: 0; color: #ff4d4f; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.login-error { margin: 0; color: #a33d50; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
 .login-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
   .login-field, .login-language-switch button, .login-submit { transition: none; }

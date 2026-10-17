@@ -49,6 +49,14 @@ def decrypt_secret(value: str) -> str:
         raise ValueError("密钥数据无法解密") from exc
 
 
+def decrypt_secret_batch(values: list[str]) -> list[str]:
+    cipher = _fernet()
+    try:
+        return [cipher.decrypt(value.encode("ascii")).decode("utf-8") for value in values]
+    except InvalidToken as exc:
+        raise ValueError("密钥数据无法解密") from exc
+
+
 def encrypt_job(payload: dict[str, Any]) -> str:
     packed = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return _fernet().encrypt(packed).decode("ascii")

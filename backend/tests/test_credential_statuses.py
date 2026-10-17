@@ -10,10 +10,11 @@ import app.credential_service as credentials
 import app.main as api
 from app.database import Credential, CredentialStatus, ExportRecord, ValidationBatch, ValidationBatchItem
 from app.export_service import export_filename, list_export_records, record_export
+from app.query_cache import CacheResult
 from app.schemas import ValidationResultInput
 from app.status_catalog import initial_status_rows
 from app.status_service import ensure_credential_statuses, list_credential_statuses, normalize_exact_export_status
-from test_export_records import make_user, request_api, session, sql
+from test_export_records import assert_credential_export_query, make_user, mock_query_export, request_api, session, sql
 
 
 def test_status_dictionary_references_and_unbounded_export_selection():
@@ -183,9 +184,9 @@ def test_exact_export_filters_requested_raw_states_without_other_errors_in_same_
 def test_exact_export_endpoint_combines_one_txt_and_records_canonical_dictionary_values(monkeypatch, request_api, session):
     request, user = request_api
     session.scalars.return_value = SimpleNamespace(all=lambda: ["invalid", "rate_limited", "permission_error"])
-    exporter = AsyncMock(return_value=["synthetic-one", "synthetic-two"])
+    exporter = mock_query_export(monkeypatch, ["synthetic-one", "synthetic-two"])
     logger = AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
 
     response = request("/api/export?status=rate_limited,invalid,rate_limited&status_mode=exact&provider=OpenAI&type=openai_official")
@@ -194,7 +195,7 @@ def test_exact_export_endpoint_combines_one_txt_and_records_canonical_dictionary
     assert response.text == "synthetic-one\nsynthetic-two"
     assert response.headers["Cache-Control"] == "no-store"
     assert response.headers["Content-Disposition"] == 'attachment; filename="openai-invalid-rate_limited.txt"'
-    exporter.assert_awaited_once_with(session, status="invalid,rate_limited", status_mode="exact", provider="OpenAI", storage_type="openai_official")
+    assert_credential_export_query(exporter, session, status="invalid,rate_limited", status_mode="exact", provider="OpenAI", storage_type="openai_official")
     logger.assert_awaited_once_with(
         session, user=user, status="invalid,rate_limited", status_mode="exact", provider="OpenAI",
         storage_type="openai_official", count=2, file_name="openai-invalid-rate_limited.txt", ip_address="127.0.0.1",
@@ -205,7 +206,7 @@ def test_exact_export_endpoint_rejects_non_dictionary_value_before_reading_crede
     request, _ = request_api
     session.scalars.return_value = SimpleNamespace(all=lambda: ["invalid", "rate_limited"])
     exporter, logger = AsyncMock(), AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
     assert request("/api/export?status=permission_error&status_mode=exact").status_code == 400
     exporter.assert_not_awaited()
@@ -254,14 +255,14 @@ def test_export_history_maps_exact_names_from_dictionary_and_preserves_legacy_la
 def test_status_directory_endpoint_forwards_provider_type_scope(monkeypatch, request_api, session):
     request, _ = request_api
     statuses = [{"value": "rate_limited", "name": "请求限速", "tone": "recovery", "sortOrder": 5, "count": 0}]
-    reader = AsyncMock(return_value=statuses)
-    monkeypatch.setattr(api, "list_credential_statuses", reader)
+    reader = AsyncMock(return_value=CacheResult({"statuses": statuses}, "HIT"))
+    monkeypatch.setattr(api, "list_credential_statistics", reader)
 
     response = request("/api/credential-statuses?provider=OpenAI&type=openai_official")
 
     assert response.status_code == 200
     assert response.json() == {"statuses": statuses}
-    reader.assert_awaited_once_with(session, provider="OpenAI", storage_type="openai_official")
+    reader.assert_awaited_once_with(session, provider="OpenAI", storage_type="openai_official", refresh=False)
 
 
 def test_keys_endpoint_forwards_exact_status_mode(monkeypatch, request_api, session):
@@ -279,8 +280,8 @@ def test_dictionary_and_exact_export_require_authentication(monkeypatch, request
     request, _ = request_api
     monkeypatch.setattr(api, "current_user", AsyncMock(return_value=None))
     reader, exporter, logger = AsyncMock(), AsyncMock(), AsyncMock()
-    monkeypatch.setattr(api, "list_credential_statuses", reader)
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "list_credential_statistics", reader)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
     assert request(path).status_code == 401
     reader.assert_not_awaited()

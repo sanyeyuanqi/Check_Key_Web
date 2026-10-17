@@ -55,6 +55,28 @@ class BatchRevealInput(BaseModel):
         return keys
 
 
+class ValidKeyExportKeyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int = Field(gt=0, le=9_223_372_036_854_775_807, strict=True)
+    type: str = Field(min_length=1, max_length=64, strict=True)
+
+
+class ValidKeyBatchExportInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=80, strict=True)
+    keys: list[ValidKeyExportKeyInput] = Field(min_length=1, max_length=100)
+
+    @field_validator("keys")
+    @classmethod
+    def unique_keys(cls, keys: list[ValidKeyExportKeyInput]) -> list[ValidKeyExportKeyInput]:
+        identities = [(item.id, item.type) for item in keys]
+        if len(identities) != len(set(identities)):
+            raise ValueError("所选密钥不能重复")
+        return keys
+
+
 class BatchStartInput(BaseModel):
     provider_label: str = Field(default="Unknown", max_length=120)
     total: int = Field(ge=1, le=1_000_000)

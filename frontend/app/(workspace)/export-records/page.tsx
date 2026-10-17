@@ -28,13 +28,15 @@ type ExportRecordsResponse = {
   pageSize: number;
 };
 
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
+
 function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).format(date);
+  return dateTimeFormatter.format(date);
 }
 
 function exportPlatform(record: ExportRecord) {
@@ -62,13 +64,14 @@ export default function ExportRecordsPage() {
   const [error, setError] = useState('');
   const activeRequest = useRef<AbortController | null>(null);
 
-  const loadRecords = useCallback(async () => {
+  const loadRecords = useCallback(async (fresh = false) => {
     activeRequest.current?.abort();
     const controller = new AbortController();
     activeRequest.current = controller;
     setBusy(true);
     setError('');
     const params = new URLSearchParams({ page: String(page) });
+    if (fresh) params.set('refresh', '1');
     if (filters.username) params.set('username', filters.username);
     if (filters.ip) params.set('ip', filters.ip);
     try {
@@ -117,7 +120,7 @@ export default function ExportRecordsPage() {
     setUsernameInput(nextFilters.username);
     setIpInput(nextFilters.ip);
     if (nextFilters.username === filters.username && nextFilters.ip === filters.ip && page === 1) {
-      void loadRecords();
+      void loadRecords(true);
       return;
     }
     prepareFilterChange();
@@ -130,7 +133,7 @@ export default function ExportRecordsPage() {
     setUsernameInput('');
     setIpInput('');
     if (!filters.username && !filters.ip && page === 1) {
-      void loadRecords();
+      void loadRecords(true);
       return;
     }
     prepareFilterChange();
@@ -154,7 +157,7 @@ export default function ExportRecordsPage() {
             <label className="search-field export-record-query-field export-record-ip-field"><input value={ipInput} onChange={(event) => setIpInput(event.target.value)} placeholder="搜索 IP 地址" aria-label="IP地址" maxLength={80} autoComplete="off" spellCheck={false} /></label>
             <button type="submit" disabled={busy} className="ui-button">查询</button>
             <button type="button" disabled={busy} onClick={resetFilters} className="ui-button">重置</button>
-            <button type="button" disabled={busy} onClick={() => void loadRecords()} className="ui-button export-record-refresh">刷新</button>
+            <button type="button" disabled={busy} onClick={() => void loadRecords(true)} className="ui-button export-record-refresh">刷新</button>
           </form>
         </div>
         <div className="export-records-mobile-list">

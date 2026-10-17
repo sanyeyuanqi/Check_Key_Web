@@ -145,6 +145,7 @@ class Credential(Base):
     reset_at: Mapped[str | None] = mapped_column(String(120))
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="desktop")
     source_ip: Mapped[str | None] = mapped_column(String(45))
+    queue_event_id: Mapped[str | None] = mapped_column(String(41))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -207,6 +208,7 @@ class ValidationBatchItem(Base):
     item_index: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(80), ForeignKey("credential_statuses.value", name="fk_batch_items_status"), nullable=False)
     result_bucket: Mapped[str] = mapped_column(String(32), nullable=False)
+    queue_event_id: Mapped[str | None] = mapped_column(String(41))
 
     __table_args__ = (
         UniqueConstraint("batch_id", "item_index", name="uq_batch_item_index"),

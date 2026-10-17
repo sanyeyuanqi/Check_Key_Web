@@ -11,6 +11,7 @@ from test_platform_partition_migration import (
     insert_credential,
     isolated_database,
     migrate,
+    migration_snapshot_row,
     run,
     snapshot,
 )
@@ -21,7 +22,7 @@ async def complete_state(database):
     connection = await connect(database)
     try:
         for table in ("credential_registry", "validation_batches"):
-            state[table] = [dict(row) for row in await connection.fetch(f"SELECT * FROM {table} ORDER BY 1")]
+            state[table] = [migration_snapshot_row(row) for row in await connection.fetch(f"SELECT * FROM {table} ORDER BY 1")]
         sequence = await connection.fetchval("SELECT pg_get_serial_sequence('credentials','id')")
         state["sequence"] = dict(await connection.fetchrow(f"SELECT last_value,is_called FROM {sequence}"))
         return state

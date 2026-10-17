@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Checkbox, ConfigProvider, Select, type ThemeConfig } from 'antd';
 import { useRouter } from 'next/navigation';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, apiUrl } from '@/lib/api-client';
 import { resultBucket } from '@/lib/credential-types';
 import { platformOptions } from '@/lib/platforms';
+import { validRecordExportRequest } from '@/lib/valid-record-export';
+import { ExportPreparationError, handoffPreparedExport, startBrowserExportDownload } from '@/lib/prepared-export';
 import { Modal } from '@/app/workspace-ui';
 import './valid-key-records.css';
 
@@ -33,13 +35,25 @@ type ValidKeyRecordsResponse = {
 };
 
 type QueryMode = 'prefix' | 'ip';
+type ExportMode = 'selected' | 'all';
+
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
 
 const providerOptions = platformOptions.map((item) => ({ value: item.provider, label: item.provider }));
 const selectionTheme: ThemeConfig = {
-  token: { colorPrimary: '#13795f', colorText: '#385b4d', colorBorder: '#dfe7e1', controlItemBgActive: '#eaf4ef', controlItemBgActiveHover: '#dceee2', controlHeight: 36, borderRadius: 6, fontSize: 12, fontFamily: 'Segoe UI, Microsoft YaHei, sans-serif' },
+  token: {
+    colorPrimary: '#13795f', colorText: '#20382f', colorTextSecondary: '#425e50',
+    colorTextTertiary: '#596e62', colorTextDescription: '#596e62', colorTextPlaceholder: '#65776b',
+    colorTextHeading: '#20382f', colorTextLabel: '#425e50', colorIcon: '#596e62', colorIconHover: '#20382f',
+    colorBorder: '#dfe7e1', controlItemBgActive: '#eaf4ef', controlItemBgActiveHover: '#dceee2',
+    controlHeight: 36, borderRadius: 6, fontSize: 14, fontSizeSM: 13,
+    fontFamily: '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif',
+  },
   components: {
     Checkbox: { colorPrimary: '#13795f', colorPrimaryHover: '#0e654f', colorBorder: '#c6d7ce', controlInteractiveSize: 14, borderRadiusSM: 3 },
-    Select: { selectorBg: '#fcfdfc', optionFontSize: 12, optionHeight: 30, optionPadding: '5px 7px', optionSelectedBg: '#eaf4ef', optionSelectedColor: '#13795f', optionActiveBg: '#f3f8f5' },
+    Select: { selectorBg: '#fcfdfc', optionFontSize: 14, optionLineHeight: 1.5714285714, optionHeight: 34, optionPadding: '6px 8px', optionSelectedBg: '#eaf4ef', optionSelectedColor: '#13795f', optionSelectedFontWeight: 600, optionActiveBg: '#f3f8f5' },
   },
 };
 
@@ -50,9 +64,7 @@ function recordSelectionId(record: ValidKeyRecord): string {
 function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).format(date);
+  return dateTimeFormatter.format(date);
 }
 
 function statusBadge(record: ValidKeyRecord) {
@@ -71,13 +83,22 @@ export default function ValidKeyRecordsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(() => new Set());
+  const [exportMode, setExportMode] = useState<ExportMode | null>(null);
   const [actionId, setActionId] = useState<number | null>(null);
   const [reveal, setReveal] = useState<{ masked: string; secret: string } | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const secretRequest = useRef<AbortController | null>(null);
+  const exportRequest = useRef<AbortController | null>(null);
   const noticeTimer = useRef<number | null>(null);
 
-  const loadRecords = useCallback(async () => {
+  const cancelExport = useCallback(() => {
+    exportRequest.current?.abort();
+    exportRequest.current = null;
+    setExportMode(null);
+  }, []);
+
+  const loadRecords = useCallback(async (fresh = false) => {
+    cancelExport();
     setSelectedRecordIds(new Set());
     activeRequest.current?.abort();
     const controller = new AbortController();
@@ -85,6 +106,7 @@ export default function ValidKeyRecordsPage() {
     setBusy(true);
     setError('');
     const params = new URLSearchParams({ page: String(page), provider });
+    if (fresh) params.set('refresh', '1');
     if (query) params.set(queryMode === 'ip' ? 'ip' : 'q', query);
     try {
       const response = await apiFetch(`/api/valid-key-records?${params}`, { cache: 'no-store', signal: controller.signal });
@@ -106,22 +128,26 @@ export default function ValidKeyRecordsPage() {
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
-  }, [page, provider, queryMode, query, router]);
+  }, [page, provider, queryMode, query, router, cancelExport]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadRecords(); }, 0);
     return () => {
       window.clearTimeout(timer);
       activeRequest.current?.abort();
+      exportRequest.current?.abort();
     };
   }, [loadRecords]);
 
   useEffect(() => () => {
     secretRequest.current?.abort();
+    exportRequest.current?.abort();
+    exportRequest.current = null;
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
   }, []);
 
   function prepareFilterChange() {
+    cancelExport();
     setSelectedRecordIds(new Set());
     activeRequest.current?.abort();
     setBusy(true);
@@ -153,7 +179,7 @@ export default function ValidKeyRecordsPage() {
   function submitSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextQuery = queryInput.trim();
-    if (nextQuery === query && page === 1) void loadRecords();
+    if (nextQuery === query && page === 1) void loadRecords(true);
     else {
       prepareFilterChange();
       setQuery(nextQuery);
@@ -204,7 +230,7 @@ export default function ValidKeyRecordsPage() {
   const somePageSelected = selectedRows.length > 0 && !allPageSelected;
 
   function selectRecord(record: ValidKeyRecord, checked: boolean) {
-    if (busy) return;
+    if (busy || exportRequest.current) return;
     setSelectedRecordIds((current) => {
       const next = new Set(current);
       if (checked) next.add(recordSelectionId(record));
@@ -214,10 +240,44 @@ export default function ValidKeyRecordsPage() {
   }
 
   function selectPage(checked: boolean) {
-    if (busy) return;
+    if (busy || exportRequest.current) return;
     setSelectedRecordIds(checked ? new Set(data.records.map(recordSelectionId)) : new Set());
   }
 
+  async function exportRecords(mode: ExportMode) {
+    if (busy || error || exportRequest.current || exportMode || (mode === 'selected' ? selectedRows.length === 0 : data.total === 0)) return;
+    const controller = new AbortController();
+    exportRequest.current = controller;
+    setExportMode(mode);
+    try {
+      const request = validRecordExportRequest(mode, provider, selectedRows, { mode: queryMode, value: query });
+      const response = await apiFetch(request.url, { ...request.init, signal: controller.signal });
+      if (controller.signal.aborted || exportRequest.current !== controller) return;
+      if (response.status === 401) {
+        router.replace('/login');
+        return;
+      }
+      const prepared = await handoffPreparedExport(response, {
+        signal: controller.signal,
+        isCurrent: () => exportRequest.current === controller,
+        download: (file) => startBrowserExportDownload(file, apiUrl),
+      });
+      if (prepared && !controller.signal.aborted && exportRequest.current === controller) {
+        showNotice('文件已准备好，下载由浏览器管理');
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && exportRequest.current === controller) {
+        showNotice(error instanceof ExportPreparationError ? error.message : '导出失败，请稍后重试');
+      }
+    } finally {
+      if (exportRequest.current === controller) {
+        exportRequest.current = null;
+        setExportMode(null);
+      }
+    }
+  }
+
+  const exporting = exportMode !== null;
   const hasRows = !busy && !error && data.records.length > 0;
   const hasQuery = Boolean(query);
   const stateMessage = <div role={error ? 'alert' : 'status'} className="valid-key-records-state"><p>{busy ? '正在读取有效密钥记录…' : error || (hasQuery ? '暂无符合条件的有效密钥记录' : '暂无有效密钥记录')}</p>{!busy && !error && <span>{hasQuery ? '请尝试其他查询条件。' : '密钥检测有效后会收录，即使后续状态变化也会保留。'}</span>}</div>;
@@ -227,8 +287,14 @@ export default function ValidKeyRecordsPage() {
   return (
     <ConfigProvider theme={selectionTheme}>
       <div className="accounts-page valid-key-records-page">
-        <div role="group" aria-label="服务平台" className="valid-key-records-platforms">
-          {providerOptions.map((item) => <button key={item.value} type="button" aria-pressed={provider === item.value} onClick={() => changeProvider(item.value)} className={`valid-key-platform-option ${provider === item.value ? 'is-selected' : ''}`}>{item.label}</button>)}
+        <div className="valid-key-records-topbar">
+          <div role="group" aria-label="服务平台" className="valid-key-records-platforms">
+            {providerOptions.map((item) => <button key={item.value} type="button" aria-pressed={provider === item.value} onClick={() => changeProvider(item.value)} className={`valid-key-platform-option ${provider === item.value ? 'is-selected' : ''}`}>{item.label}</button>)}
+          </div>
+          <div role="group" aria-label="有效密钥导出" aria-busy={exporting} className="valid-key-records-export-actions">
+            <button type="button" title="准备 TXT 文件后由浏览器下载" disabled={busy || Boolean(error) || exporting || selectedRows.length === 0} onClick={() => void exportRecords('selected')} className="ui-button ui-button--soft">{exportMode === 'selected' ? '准备文件…' : '批量导出'}</button>
+            <button type="button" title="导出当前平台全部匹配记录，准备完成后由浏览器下载" disabled={busy || Boolean(error) || exporting || data.total === 0} onClick={() => void exportRecords('all')} className="ui-button ui-button--primary">{exportMode === 'all' ? '准备文件…' : '导出全部'}</button>
+          </div>
         </div>
         <section aria-label="有效密钥记录" aria-busy={busy} className="data-panel valid-key-records-panel">
           <div className="valid-key-records-filters">
@@ -240,9 +306,9 @@ export default function ValidKeyRecordsPage() {
             </form>
           </div>
           <div className="valid-key-records-mobile-list">
-            <div className="valid-key-mobile-selection"><Checkbox aria-label="全选本页有效密钥" checked={allPageSelected} indeterminate={somePageSelected} disabled={busy || data.records.length === 0} onChange={(event) => selectPage(event.target.checked)}>全选本页</Checkbox><span aria-live="polite">已选 {selectedRows.length} 条</span></div>
+            <div className="valid-key-mobile-selection"><Checkbox aria-label="全选本页有效密钥" checked={allPageSelected} indeterminate={somePageSelected} disabled={busy || exporting || data.records.length === 0} onChange={(event) => selectPage(event.target.checked)}>全选本页</Checkbox><span aria-live="polite">已选 {selectedRows.length} 条</span></div>
             {hasRows ? data.records.map((record) => <article key={recordSelectionId(record)} className={`valid-key-record-mobile-row ${selectedRecordIds.has(recordSelectionId(record)) ? 'is-selected' : ''}`}>
-              <div className="mobile-row-heading"><div className="valid-key-mobile-heading"><Checkbox aria-label={`选择有效密钥 ${record.keyPrefix}`} checked={selectedRecordIds.has(recordSelectionId(record))} disabled={busy} onChange={(event) => selectRecord(record, event.target.checked)} /><code className="key-prefix">{record.keyPrefix}</code></div>{statusBadge(record)}</div>
+              <div className="mobile-row-heading"><div className="valid-key-mobile-heading"><Checkbox aria-label={`选择有效密钥 ${record.keyPrefix}`} checked={selectedRecordIds.has(recordSelectionId(record))} disabled={busy || exporting} onChange={(event) => selectRecord(record, event.target.checked)} /><code className="key-prefix">{record.keyPrefix}</code></div>{statusBadge(record)}</div>
               <code className="key-mask">{record.masked}</code>
               <dl>
                 <div><dt>首次有效</dt><dd>{formatTime(record.firstValidAt)}</dd></div>
@@ -253,9 +319,9 @@ export default function ValidKeyRecordsPage() {
             </article>) : stateMessage}
           </div>
           <div className="table-scroll"><table className="workspace-table valid-key-records-table">
-            <thead><tr><th scope="col" className="valid-key-select-cell"><Checkbox aria-label="全选本页有效密钥" checked={allPageSelected} indeterminate={somePageSelected} disabled={busy || data.records.length === 0} onChange={(event) => selectPage(event.target.checked)} /></th>{['密钥前32位', '当前状态', '首次有效', '最近有效', 'IP 地址', '操作'].map((heading) => <th key={heading} scope="col">{heading}</th>)}</tr></thead>
+            <thead><tr><th scope="col" className="valid-key-select-cell"><Checkbox aria-label="全选本页有效密钥" checked={allPageSelected} indeterminate={somePageSelected} disabled={busy || exporting || data.records.length === 0} onChange={(event) => selectPage(event.target.checked)} /></th>{['密钥前32位', '当前状态', '首次有效', '最近有效', 'IP 地址', '操作'].map((heading) => <th key={heading} scope="col">{heading}</th>)}</tr></thead>
             <tbody>{hasRows ? data.records.map((record) => <tr key={recordSelectionId(record)} className={selectedRecordIds.has(recordSelectionId(record)) ? 'is-selected' : undefined}>
-              <td className="valid-key-select-cell"><Checkbox aria-label={`选择有效密钥 ${record.keyPrefix}`} checked={selectedRecordIds.has(recordSelectionId(record))} disabled={busy} onChange={(event) => selectRecord(record, event.target.checked)} /></td>
+              <td className="valid-key-select-cell"><Checkbox aria-label={`选择有效密钥 ${record.keyPrefix}`} checked={selectedRecordIds.has(recordSelectionId(record))} disabled={busy || exporting} onChange={(event) => selectRecord(record, event.target.checked)} /></td>
               <td><code className="key-prefix">{record.keyPrefix}</code><code className="key-mask">{record.masked}</code></td>
               <td>{statusBadge(record)}</td>
               <td className="cell-muted valid-key-record-time">{formatTime(record.firstValidAt)}</td>

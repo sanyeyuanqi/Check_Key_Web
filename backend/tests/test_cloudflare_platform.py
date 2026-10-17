@@ -18,7 +18,7 @@ from app.platform_catalog import STORAGE_TYPE_PROVIDERS
 from app.schemas import BatchRevealKeyInput, ValidationResultInput
 from app.security import decrypt_secret, encrypt_secret, fingerprint
 from app.valid_key_service import list_valid_key_records
-from test_export_records import request_api, session
+from test_export_records import SQLiteScalarStream, request_api, session
 
 
 NOW = datetime(2026, 10, 17, tzinfo=UTC)
@@ -61,6 +61,7 @@ def cloudflare_database(request):
         yield SimpleNamespace(
             execute=AsyncMock(side_effect=db.execute), scalar=AsyncMock(side_effect=db.scalar),
             scalars=AsyncMock(side_effect=db.scalars), first_secret=first_secret, second_secret=second_secret,
+            stream_scalars=AsyncMock(side_effect=lambda statement: SQLiteScalarStream(db.scalars(statement))),
             get=AsyncMock(side_effect=lambda model, identity: None if model is AuthIPBlock else db.get(model, identity)),
         )
     engine.dispose()

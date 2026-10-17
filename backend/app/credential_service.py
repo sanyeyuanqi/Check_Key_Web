@@ -3,15 +3,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import Credential, ValidationBatch, ValidationBatchItem
+from .credential_statistics import list_credential_statistics
 from .platform_catalog import STORAGE_TYPE_PROVIDERS, scoped_provider
+from .query_cache import invalidate_query_cache
 from .schemas import BatchRevealKeyInput, ValidationResultInput
 from .security import decrypt_secret, encrypt_secret, fingerprint
-from .status_service import ensure_credential_statuses, list_credential_statuses
+from .status_service import ensure_credential_statuses
 from .valid_key_service import remember_valid_key
 
 VALID_STORAGE_TYPES = set(STORAGE_TYPE_PROVIDERS)
@@ -156,6 +158,7 @@ async def process_batch_results(
     batch.invalid_count = int(counts[4] or 0)
     batch.completed_at = now if batch.received_count >= batch.total else None
     await session.commit()
+    await invalidate_query_cache("credentials")
     return len(results)
 
 
@@ -170,6 +173,7 @@ async def list_credentials(
     status_mode: str = "bucket",
     created_from: datetime | None = None,
     created_before: datetime | None = None,
+    refresh_statistics: bool = False,
 ) -> dict[str, Any]:
     page = max(1, page)
     prefix = (query or "").strip()[:32]
@@ -187,17 +191,10 @@ async def list_credentials(
     if created_before is not None:
         filters.append(Credential.created_at < created_before)
 
-    summary_rows = (await session.execute(
-        select(Credential.result_bucket, func.count(Credential.id)).where(*filters).group_by(Credential.result_bucket)
-    )).all()
-    counts = {bucket: int(count) for bucket, count in summary_rows}
-    summary = {
-        "total": sum(counts.values()),
-        "valid": counts.get("valid", 0),
-        "recovery": counts.get("usage_limit_reached", 0),
-        "insufficient": counts.get("insufficient_credit", 0),
-        "invalid": counts.get("invalid", 0),
-    }
+    statistics = await list_credential_statistics(
+        session, provider=provider, storage_type=storage_type,
+        created_from=created_from, created_before=created_before, refresh=refresh_statistics,
+    )
 
     row_filters = list(filters)
     if status and status != "all":
@@ -229,11 +226,8 @@ async def list_credentials(
             "updatedAt": row.updated_at.isoformat(),
             "ipAddress": row.source_ip,
         } for row in rows],
-        "summary": summary,
-        "statuses": await list_credential_statuses(
-            session, provider=provider, storage_type=storage_type,
-            created_from=created_from, created_before=created_before,
-        ),
+        "summary": statistics.data["summary"],
+        "statuses": statistics.data["statuses"],
         "total": total,
         "page": page,
         "totalPages": total_pages,
@@ -286,8 +280,7 @@ async def reveal_credentials(
     return [decrypt_secret(matched[identity].encrypted_secret) for identity in identities]
 
 
-async def export_credentials(
-    session: AsyncSession,
+def _credential_export_filters(
     *,
     status: str,
     provider: str | None,
@@ -295,7 +288,7 @@ async def export_credentials(
     status_mode: str = "bucket",
     created_from: datetime | None = None,
     created_before: datetime | None = None,
-) -> list[str]:
+) -> list[Any]:
     filters = []
     provider = scoped_provider(provider, storage_type)
     if status != "all":
@@ -313,6 +306,42 @@ async def export_credentials(
         filters.append(Credential.created_at >= created_from)
     if created_before is not None:
         filters.append(Credential.created_at < created_before)
+    return filters
+
+
+def credential_export_statement(
+    *,
+    status: str,
+    provider: str | None,
+    storage_type: str | None,
+    status_mode: str = "bucket",
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+) -> Select[tuple[str]]:
+    """Select only ciphertext so large exports can use a bounded scalar stream."""
+    filters = _credential_export_filters(
+        status=status, provider=provider, storage_type=storage_type, status_mode=status_mode,
+        created_from=created_from, created_before=created_before,
+    )
+    return select(Credential.encrypted_secret).where(*filters).order_by(
+        Credential.created_at.desc(), Credential.id.desc(),
+    )
+
+
+async def export_credentials(
+    session: AsyncSession,
+    *,
+    status: str,
+    provider: str | None,
+    storage_type: str | None,
+    status_mode: str = "bucket",
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+) -> list[str]:
+    filters = _credential_export_filters(
+        status=status, provider=provider, storage_type=storage_type, status_mode=status_mode,
+        created_from=created_from, created_before=created_before,
+    )
     rows = (await session.scalars(
         select(Credential).where(*filters).order_by(Credential.created_at.desc(), Credential.id.desc())
     )).all()

@@ -1,9 +1,9 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import AppShell from '@/app/app-shell';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, markNextReadsFresh } from '@/lib/api-client';
 import type { AuthUser } from '@/lib/auth-types';
 
 const AuthUserContext = createContext<AuthUser | null>(null);
@@ -16,6 +16,7 @@ export function useAuthUser(): AuthUser {
 
 export default function AuthenticatedShell({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [contentVersion, setContentVersion] = useState(0);
 
@@ -32,8 +33,16 @@ export default function AuthenticatedShell({ children }: { children: ReactNode }
     return () => { mounted = false; };
   }, [router]);
 
-  if (!user) {
-    return <main className="grid min-h-screen place-items-center bg-background text-[13px] text-[#7b8798]">正在验证登录状态…</main>;
+  function refreshCurrentPage() {
+    const paths = pathname.startsWith('/platform/') ? ['/api/keys', '/api/credential-statuses']
+      : pathname === '/valid-key-records' ? ['/api/valid-key-records']
+      : pathname === '/export-records' ? ['/api/export-records'] : [];
+    markNextReadsFresh(paths);
+    setContentVersion((version) => version + 1);
   }
-  return <AuthUserContext.Provider value={user}><AppShell currentUser={user} onRefresh={() => setContentVersion((version) => version + 1)}><main id="main-content" key={contentVersion}>{children}</main></AppShell></AuthUserContext.Provider>;
+
+  if (!user) {
+    return <main className="grid min-h-screen place-items-center bg-background text-[15px] text-foreground">正在验证登录状态…</main>;
+  }
+  return <AuthUserContext.Provider value={user}><AppShell currentUser={user} onRefresh={refreshCurrentPage}><main id="main-content" key={contentVersion}>{children}</main></AppShell></AuthUserContext.Provider>;
 }

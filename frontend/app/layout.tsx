@@ -16,7 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body className="antialiased">
+      <body>
         <AntdRegistry><AccessGate>{children}</AccessGate></AntdRegistry>
       </body>
     </html>

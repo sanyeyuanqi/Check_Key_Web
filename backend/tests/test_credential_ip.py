@@ -39,26 +39,24 @@ def redis():
     client = MagicMock(spec=Redis)
     client.xadd = AsyncMock()
     client.xack = AsyncMock()
+    client.eval = AsyncMock(return_value=b"123-0")
     return client
 
 
-@pytest.mark.parametrize("queued", [False, True])
 @pytest.mark.parametrize("peer,expected_ip", [
     ("203.0.113.7", "203.0.113.7"),
     ("2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8::1"),
 ])
-def test_device_upload_uses_peer_ip_for_immediate_and_queued_processing(monkeypatch, session, redis, queued, peer, expected_ip):
+def test_device_upload_always_queues_with_peer_ip(monkeypatch, session, redis, peer, expected_ip):
     async def fake_session():
         yield session
 
     async def fake_redis():
         yield redis
 
-    processor = AsyncMock(return_value=1)
     enqueuer = AsyncMock(return_value="123-0")
-    monkeypatch.setattr(api, "process_batch_results", processor)
     monkeypatch.setattr(api, "enqueue_results", enqueuer)
-    monkeypatch.setattr(api, "is_burst", AsyncMock(return_value=queued))
+    session.get.return_value = ValidationBatch(id=29, total=1)
     previous_overrides = api.app.dependency_overrides.copy()
     api.app.dependency_overrides[api.get_session] = fake_session
     api.app.dependency_overrides[api.redis_dependency] = fake_redis
@@ -78,31 +76,30 @@ def test_device_upload_uses_peer_ip_for_immediate_and_queued_processing(monkeypa
         api.app.dependency_overrides.clear()
         api.app.dependency_overrides.update(previous_overrides)
 
-    assert response.status_code == (202 if queued else 200)
-    assert response.json()["queued"] == queued
-    if queued:
-        processor.assert_not_awaited()
-        enqueuer.assert_awaited_once_with(redis, 29, [ValidationResultInput.model_validate(result_payload()).model_dump()], source_ip=expected_ip)
-    else:
-        enqueuer.assert_not_awaited()
-        processor.assert_awaited_once_with(session, 29, [ValidationResultInput.model_validate(result_payload())], source_ip=expected_ip)
+    assert response.status_code == 202
+    assert response.json()["queued"] is True
+    enqueuer.assert_awaited_once_with(redis, 29, [ValidationResultInput.model_validate(result_payload()).model_dump()], source_ip=expected_ip)
+    session.commit.assert_not_awaited()
+    session.execute.assert_not_awaited()
 
 
 @pytest.mark.parametrize("source_ip", [None, "2001:db8::1"])
 def test_queue_encrypts_upload_source_ip_with_results(redis, source_ip):
-    redis.xadd.return_value = b"123-0"
     results = [result_payload()]
     message_id = asyncio.run(enqueue_results(redis, 29, results, source_ip=source_ip))
 
     assert message_id == "123-0"
-    redis.xadd.assert_awaited_once()
-    args = redis.xadd.await_args.args
-    assert args[0] == settings.redis_stream_name
-    encrypted_payload = args[1]["payload"]
+    redis.eval.assert_awaited_once()
+    redis.xadd.assert_not_awaited()
+    args = redis.eval.await_args.args
+    assert args[2] == settings.redis_stream_name
+    encrypted_payload = args[5]
     assert "synthetic-ip-test-key" not in encrypted_payload
     if source_ip:
         assert source_ip not in encrypted_payload
-    assert decrypt_job(encrypted_payload) == {"batch_id": 29, "results": results, "source_ip": source_ip}
+    decoded = decrypt_job(encrypted_payload)
+    assert datetime.fromisoformat(decoded.pop("enqueued_at")).tzinfo is not None
+    assert decoded == {"batch_id": 29, "results": results, "source_ip": source_ip}
 
 
 @pytest.mark.parametrize("source_ip,old_message", [("203.0.113.7", False), (None, True)])
@@ -113,15 +110,24 @@ def test_worker_passes_new_source_ip_and_accepts_old_messages(monkeypatch, sessi
     factory = MagicMock()
     factory.return_value.__aenter__.return_value = session
     processor = AsyncMock(return_value=1)
-    monkeypatch.setattr(worker, "SessionFactory", factory)
-    monkeypatch.setattr(worker, "process_batch_results", processor)
+    finish = AsyncMock()
+    monkeypatch.setattr(worker, "finish_messages", finish)
 
-    asyncio.run(worker.process_message(redis, b"123-0", {b"payload": encrypt_job(payload).encode()}))
+    async def process():
+        consumer = worker.BatchWorker(redis, "synthetic-consumer", session_factory=factory, processor=processor)
+        await consumer.process_entries([(b"123-0", {b"payload": encrypt_job(payload).encode()})])
+        await consumer.flush()
 
-    processor.assert_awaited_once_with(
-        session, 29, [ValidationResultInput.model_validate(result_payload())], source_ip=source_ip,
-    )
-    redis.xack.assert_awaited_once_with(settings.redis_stream_name, settings.redis_consumer_group, b"123-0")
+    asyncio.run(process())
+
+    processor.assert_awaited_once()
+    assert processor.await_args.args[0] is session
+    jobs = processor.await_args.args[1]
+    assert len(jobs) == 1
+    assert jobs[0].batch_id == 29
+    assert jobs[0].source_ip == source_ip
+    assert jobs[0].results == [ValidationResultInput.model_validate(result_payload())]
+    finish.assert_awaited_once_with(redis, ["123-0"])
 
 
 @pytest.mark.parametrize("source_ip", ["203.0.113.7", "2001:db8::1", None])

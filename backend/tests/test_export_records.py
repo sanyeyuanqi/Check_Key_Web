@@ -27,6 +27,47 @@ def sql(statement):
     return str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
 
 
+def mock_query_export(monkeypatch, values=(), *, error=None):
+    """Supply synthetic file contents while exercising the route's real SQL scope."""
+    async def write(*args):
+        if error is not None:
+            raise error
+        return await api.write_selected_export(list(values))
+
+    writer = AsyncMock(side_effect=write)
+    monkeypatch.setattr(api, "write_query_export", writer)
+    return writer
+
+
+def assert_credential_export_query(writer, session, *, provider, status, storage_type, status_mode="bucket"):
+    writer.assert_awaited_once()
+    actual_session, statement, request = writer.await_args.args
+    assert actual_session is session
+    assert isinstance(request, Request)
+    query = sql(statement)
+    assert query.startswith("SELECT credentials.encrypted_secret")
+    assert "LIMIT" not in query and "OFFSET" not in query
+    assert "ORDER BY credentials.created_at DESC, credentials.id DESC" in query
+    where = query.split("WHERE", 1)[1].split("ORDER BY", 1)[0] if "WHERE" in query else ""
+    if provider:
+        assert f"credentials.provider = '{provider}'" in where
+    else:
+        assert "credentials.provider" not in where
+    if storage_type:
+        assert f"credentials.storage_type = '{storage_type}'" in where
+    else:
+        assert "credentials.storage_type" not in where
+    column = "credentials.status" if status_mode == "exact" else "credentials.result_bucket"
+    if status == "all":
+        assert column not in where
+    elif "," in status:
+        literals = ", ".join(repr(value) for value in status.split(","))
+        assert f"{column} IN ({literals})" in where
+    else:
+        assert f"{column} = '{status}'" in where
+    return statement
+
+
 @pytest.fixture
 def session():
     db_session = MagicMock(spec=AsyncSession)
@@ -168,6 +209,20 @@ class SQLiteAsyncSession:
         return self.sync_session.execute(statement)
 
 
+class SQLiteScalarStream:
+    """Async scalar-partition adapter over a synthetic SQLite query result."""
+
+    def __init__(self, result):
+        self.result = result
+
+    async def partitions(self, size):
+        for batch in self.result.partitions(size):
+            yield batch
+
+    async def close(self):
+        self.result.close()
+
+
 @pytest.fixture
 def export_filter_database(monkeypatch):
     monkeypatch.setattr(export_service, "resolve_ip_region", lambda address: "synthetic-region" if address else None)
@@ -266,9 +321,9 @@ def test_filtered_count_and_rows_share_scope_before_pagination_and_page_clamping
 @pytest.mark.parametrize("values", [[], ["synthetic-key-one", "synthetic-key-two"]])
 def test_export_success_records_exact_actor_scope_and_count(monkeypatch, request_api, session, values):
     request, user = request_api
-    exporter = AsyncMock(return_value=values)
+    exporter = mock_query_export(monkeypatch, values)
     logger = AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
 
     response = request("/api/export?provider=OpenAI&status=valid&type=openai_official")
@@ -277,7 +332,7 @@ def test_export_success_records_exact_actor_scope_and_count(monkeypatch, request
     assert response.text == "\n".join(values)
     assert response.headers["Content-Disposition"] == 'attachment; filename="openai-valid.txt"'
     assert response.headers["Cache-Control"] == "no-store"
-    exporter.assert_awaited_once_with(session, provider="OpenAI", status="valid", storage_type="openai_official")
+    assert_credential_export_query(exporter, session, provider="OpenAI", status="valid", storage_type="openai_official")
     logger.assert_awaited_once_with(
         session, user=user, provider="OpenAI", storage_type="openai_official",
         status="valid", count=len(values), file_name="openai-valid.txt", ip_address="127.0.0.1",
@@ -287,7 +342,7 @@ def test_export_success_records_exact_actor_scope_and_count(monkeypatch, request
 def test_unscoped_export_preserves_legacy_filename_and_records_whole_scope(monkeypatch, request_api, session):
     request, user = request_api
     logger = AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", AsyncMock(return_value=["synthetic-key"]))
+    mock_query_export(monkeypatch, ["synthetic-key"])
     monkeypatch.setattr(api, "record_export", logger)
 
     response = request("/api/export?status=valid")
@@ -316,9 +371,9 @@ def test_export_merges_selection_into_one_text_download_and_one_canonical_record
 ):
     request, user = request_api
     values = ["synthetic-first-secret", "synthetic-second-secret", "synthetic-third-secret"]
-    exporter = AsyncMock(return_value=values)
+    exporter = mock_query_export(monkeypatch, values)
     logger = AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
     query = str(httpx.QueryParams({
         "status": selected,
@@ -333,7 +388,7 @@ def test_export_merges_selection_into_one_text_download_and_one_canonical_record
     assert response.headers["Content-Disposition"] == f'attachment; filename="{file_name}"'
     assert response.headers["Cache-Control"] == "no-store"
     assert response.text == "\n".join(values)
-    exporter.assert_awaited_once_with(session, provider=provider, status=canonical, storage_type=storage_type)
+    assert_credential_export_query(exporter, session, provider=provider, status=canonical, storage_type=storage_type)
     logger.assert_awaited_once_with(
         session, user=user, provider=provider, storage_type=storage_type,
         status=canonical, count=3, file_name=file_name, ip_address="127.0.0.1",
@@ -396,7 +451,7 @@ def test_export_client_ip_normalizes_addresses_and_handles_missing_peer(client, 
 def test_export_records_peer_ip_and_ignores_forged_forwarding_headers(monkeypatch, request_api, client, expected):
     request, _ = request_api
     logger = AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", AsyncMock(return_value=[]))
+    mock_query_export(monkeypatch, [])
     monkeypatch.setattr(api, "record_export", logger)
 
     response = request(
@@ -422,7 +477,7 @@ def test_export_records_peer_ip_and_ignores_forged_forwarding_headers(monkeypatc
 def test_invalid_export_does_not_read_credentials_or_write_record(monkeypatch, request_api, query, status_code):
     request, _ = request_api
     exporter, logger = AsyncMock(), AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
     assert request("/api/export?" + query).status_code == status_code
     exporter.assert_not_awaited()
@@ -432,7 +487,7 @@ def test_invalid_export_does_not_read_credentials_or_write_record(monkeypatch, r
 def test_failed_export_does_not_write_success_record(monkeypatch, request_api):
     request, _ = request_api
     logger = AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", AsyncMock(side_effect=HTTPException(500, "export failed")))
+    mock_query_export(monkeypatch, error=HTTPException(500, "export failed"))
     monkeypatch.setattr(api, "record_export", logger)
     assert request("/api/export?status=valid").status_code == 500
     logger.assert_not_awaited()
@@ -440,7 +495,7 @@ def test_failed_export_does_not_write_success_record(monkeypatch, request_api):
 
 def test_record_failure_does_not_return_download_success(monkeypatch, request_api):
     request, _ = request_api
-    monkeypatch.setattr(api, "export_credentials", AsyncMock(return_value=["synthetic-private-key"]))
+    mock_query_export(monkeypatch, ["synthetic-private-key"])
     monkeypatch.setattr(api, "record_export", AsyncMock(side_effect=RuntimeError("record write failed")))
     response = request("/api/export?status=valid")
     assert response.status_code == 500
@@ -492,7 +547,7 @@ def test_export_and_records_require_login(monkeypatch, request_api, path):
     request, _ = request_api
     monkeypatch.setattr(api, "current_user", AsyncMock(return_value=None))
     exporter, logger, reader = AsyncMock(), AsyncMock(), AsyncMock()
-    monkeypatch.setattr(api, "export_credentials", exporter)
+    monkeypatch.setattr(api, "write_query_export", exporter)
     monkeypatch.setattr(api, "record_export", logger)
     monkeypatch.setattr(api, "list_export_records", reader)
 
@@ -500,3 +555,23 @@ def test_export_and_records_require_login(monkeypatch, request_api, path):
     exporter.assert_not_awaited()
     logger.assert_not_awaited()
     reader.assert_not_awaited()
+
+
+@pytest.mark.parametrize("status,label", [
+    ("archive_selected", "有效密钥记录 · 勾选导出"),
+    ("archive_all", "有效密钥记录 · 全部匹配"),
+])
+def test_archive_export_record_scope_is_readable_and_keeps_member_ownership(export_filter_database, status, label):
+    export_filter_database.sync_session.add_all([
+        ExportRecord(
+            id=100 + user_id, user_id=user_id, username=f"user{user_id}", provider="OpenAI",
+            status=status, status_mode="archive", credential_count=101,
+            file_name="openai-valid-records-all.txt", created_at=datetime(2026, 10, 17, tzinfo=timezone.utc),
+        ) for user_id in (17, 18)
+    ])
+    export_filter_database.sync_session.commit()
+    records = asyncio.run(list_export_records(export_filter_database, user=make_user(), page=1))["records"]
+    archive_records = [record for record in records if record["status"] == status]
+    assert len(archive_records) == 1
+    assert archive_records[0]["statusNames"] == [label]
+    assert archive_records[0]["count"] == 101

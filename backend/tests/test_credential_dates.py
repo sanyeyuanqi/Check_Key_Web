@@ -13,7 +13,7 @@ import app.main as api
 from app.database import Credential, CredentialStatus
 from app.export_service import export_filename
 from app.status_service import list_credential_statuses
-from test_export_records import request_api, session
+from test_export_records import mock_query_export, request_api, session, sql
 
 
 START = datetime(2026, 9, 1, 16, tzinfo=UTC)
@@ -119,8 +119,8 @@ def test_one_sided_date_filters_are_supported(monkeypatch, synthetic_database, b
 
 @pytest.mark.parametrize("path,target", [
     ("/api/keys?status=all&status_mode=exact", "list_credentials"),
-    ("/api/credential-statuses?", "list_credential_statuses"),
-    ("/api/export?status=valid", "export_credentials"),
+    ("/api/credential-statuses?", "list_credential_statistics"),
+    ("/api/export?status=valid", "write_query_export"),
 ])
 @pytest.mark.parametrize("options", [
     {"created_from": "2026-09-02"},
@@ -144,14 +144,17 @@ def test_api_rejects_naive_invalid_or_reversed_dates_before_querying(
 
 @pytest.mark.parametrize("path,target,result", [
     ("/api/keys?status=all&status_mode=exact&page=2", "list_credentials", {"total": 0, "keys": []}),
-    ("/api/credential-statuses?", "list_credential_statuses", []),
-    ("/api/export?status=valid&status_mode=exact", "export_credentials", ["synthetic-only-secret"]),
+    ("/api/credential-statuses?", "list_credential_statistics", []),
+    ("/api/export?status=valid&status_mode=exact", "write_query_export", ["synthetic-only-secret"]),
 ])
 def test_api_passes_timezone_aware_date_bounds_and_preserves_export_audit(
     monkeypatch, request_api, session, path, target, result,
 ):
     request, user = request_api
-    reader, logger = AsyncMock(return_value=result), AsyncMock()
+    if target == "list_credential_statistics":
+        result = SimpleNamespace(data={"statuses": result}, status="BYPASS")
+    reader = mock_query_export(monkeypatch, result) if target == "write_query_export" else AsyncMock(return_value=result)
+    logger = AsyncMock()
     monkeypatch.setattr(api, target, reader)
     monkeypatch.setattr(api, "record_export", logger)
     monkeypatch.setattr(api, "normalize_exact_export_status", AsyncMock(return_value="valid"))
@@ -160,15 +163,21 @@ def test_api_passes_timezone_aware_date_bounds_and_preserves_export_audit(
         "created_from": "2026-09-02T00:00:00+08:00", "created_before": BEFORE.isoformat(),
     })))
     assert response.status_code == 200
-    assert reader.await_args.kwargs["created_from"] == START
-    assert reader.await_args.kwargs["created_before"] == BEFORE
-    if target == "export_credentials":
+    if target == "write_query_export":
+        statement = reader.await_args.args[1]
+        bounds = [value for value in statement.compile().params.values() if isinstance(value, datetime)]
+        assert bounds == [START, BEFORE]
+        assert "credentials.created_at >=" in sql(statement)
+        assert "credentials.created_at <" in sql(statement)
         assert response.text == "synthetic-only-secret"
         assert logger.await_args.kwargs["status"] == "valid"
         assert logger.await_args.kwargs["count"] == 1
         assert logger.await_args.kwargs["user"] == user
         assert logger.await_args.kwargs["file_name"] == export_filename(None, "valid", **DATE_OPTIONS)
         assert "from-2026-09-01T160000Z-before-2026-09-02T160000Z" in response.headers["Content-Disposition"]
+    else:
+        assert reader.await_args.kwargs["created_from"] == START
+        assert reader.await_args.kwargs["created_before"] == BEFORE
 
 
 def test_export_date_filename_preserves_legacy_names_and_maximum_audit_length():

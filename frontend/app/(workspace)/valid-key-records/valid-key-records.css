@@ -1,12 +1,15 @@
-.valid-key-records-platforms { display: flex; min-width: 0; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
-.valid-key-platform-option { min-height: 36px; max-width: 100%; border: 1px solid #dce5e0; border-radius: 6px; background: white; padding: 7px 15px; color: #607870; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; transition: background .15s, border-color .15s; }
+.valid-key-records-topbar { display: flex; min-width: 0; flex-shrink: 0; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.valid-key-records-platforms { display: flex; min-width: 0; flex: 1 1 500px; flex-wrap: wrap; align-items: center; gap: 8px; }
+.valid-key-records-export-actions { display: flex; max-width: 100%; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.valid-key-records-export-actions .ui-button { min-height: 36px; padding: 6px 10px; }
+.valid-key-platform-option { min-height: 36px; max-width: 100%; border: 1px solid #dce5e0; border-radius: 6px; background: white; padding: 6px 15px; color: #425e50; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; transition: background .15s, border-color .15s; }
 .valid-key-platform-option:hover { border-color: #a9cbb9; background: #f2f7f4; }
 .valid-key-platform-option.is-selected { border-color: #8fbca3; background: #eaf4ef; color: #13795f; font-weight: 600; }
 .valid-key-records-filters { display: flex; min-width: 0; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--border); padding: 18px 23px; }
-.valid-key-selected-count { color: #8ca08f; font-size: 11px; }
+.valid-key-selected-count { color: var(--muted); font-size: 13px; }
 .valid-key-records-filters .search-form { width: 500px; min-width: 0; max-width: 100%; gap: 8px; }
 .valid-key-query-mode { width: 116px; min-width: 0; height: 36px; flex: 0 0 116px; }
-.valid-key-records-filters .search-button { min-height: 36px; flex-shrink: 0; padding: 7px 10px; }
+.valid-key-records-filters .search-button { min-height: 36px; flex-shrink: 0; padding: 6px 10px; }
 .valid-key-records-table { width: 100%; min-width: 1000px; table-layout: fixed; }
 .valid-key-records-table th, .valid-key-records-table td { padding-left: 14px; padding-right: 14px; }
 .valid-key-records-table th:first-child { width: 44px; }
@@ -15,7 +18,7 @@
 .valid-key-records-table th:nth-child(4), .valid-key-records-table th:nth-child(5) { width: 14%; }
 .valid-key-records-table th:nth-child(6) { width: 12%; }
 .valid-key-records-table th:nth-child(7) { width: 8%; }
-.valid-key-records-table th:nth-child(7), .valid-key-records-table td:nth-child(7) { text-align: center; }
+.valid-key-records-table th:nth-child(7), .valid-key-records-table td:nth-child(7) { padding-inline: 8px; text-align: center; }
 .valid-key-records-table .valid-key-select-cell { padding: 0; text-align: center; vertical-align: middle; }
 .valid-key-records-table tbody tr.is-selected, .valid-key-record-mobile-row.is-selected { background: #f1f8f4; }
 .valid-key-records-table td { overflow-wrap: anywhere; }
@@ -25,19 +28,21 @@
 .valid-key-records-table .row-actions { justify-content: center; gap: 4px; }
 .valid-key-record-time { line-height: 1.7; }
 .valid-key-records-state { padding: 90px 20px; color: var(--muted); text-align: center; }
-.valid-key-records-state span { display: block; margin-top: 10px; color: #9caca1; font-size: 12px; line-height: 1.8; }
+.valid-key-records-state span { display: block; margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.8; }
 .valid-key-records-mobile-list { display: none; }
 
 @media (max-width: 1200px) {
   .valid-key-records-filters { gap: 16px; padding-left: 18px; padding-right: 18px; }
 }
 @media (max-width: 767px) {
+  .valid-key-records-topbar { gap: 12px; }
+  .valid-key-records-platforms { flex-basis: 100%; }
   .valid-key-records-filters { align-items: stretch; flex-direction: column; gap: 12px; padding: 16px; }
   .valid-key-selected-count { display: none; }
   .valid-key-records-filters .search-form { display: grid; width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; }
   .valid-key-query-mode { width: 100%; grid-column: 1 / -1; }
   .valid-key-records-mobile-list { display: block; min-height: 250px; max-height: 65dvh; overflow-y: auto; }
-  .valid-key-mobile-selection { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf1ee; padding: 14px 16px; color: #8ca08f; font-size: 11px; }
+  .valid-key-mobile-selection { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf1ee; padding: 14px 16px; color: var(--muted); font-size: 13px; }
   .valid-key-mobile-heading { display: flex; min-width: 0; align-items: flex-start; gap: 10px; }
   .valid-key-mobile-heading .ant-checkbox-wrapper { flex-shrink: 0; margin-top: 2px; }
   .valid-key-mobile-heading .key-prefix { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
@@ -46,9 +51,9 @@
   .valid-key-record-mobile-row .mobile-row-heading > code { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
   .valid-key-record-mobile-row .status-badge { flex-shrink: 0; }
   .valid-key-record-mobile-row > .key-mask { white-space: normal; }
-  .valid-key-record-mobile-row dl { display: grid; gap: 8px; margin-top: 12px; font-size: 11px; line-height: 1.7; }
-  .valid-key-record-mobile-row dl > div { display: grid; min-width: 0; grid-template-columns: 65px minmax(0, 1fr); gap: 12px; }
-  .valid-key-record-mobile-row dt { color: #8ca08f; }
-  .valid-key-record-mobile-row dd { min-width: 0; color: #607870; }
+  .valid-key-record-mobile-row dl { display: grid; gap: 8px; margin-top: 12px; font-size: 14px; line-height: 1.7; }
+  .valid-key-record-mobile-row dl > div { display: grid; min-width: 0; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
+  .valid-key-record-mobile-row dt { color: var(--muted); font-size: 13px; }
+  .valid-key-record-mobile-row dd { min-width: 0; color: #425e50; }
   .valid-key-record-mobile-row > .row-actions { justify-content: center; margin-top: 12px; }
 }

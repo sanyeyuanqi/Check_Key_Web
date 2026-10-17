@@ -3,12 +3,15 @@ from datetime import datetime
 from ipaddress import IPv6Address, ip_address
 from typing import Any
 
-from sqlalchemy import func, select
+from fastapi import HTTPException
+from sqlalchemy import Select, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import Credential, CredentialStatus, ValidKeyRecord
-from .platform_catalog import scoped_provider
+from .platform_catalog import STORAGE_TYPE_PROVIDERS, scoped_provider
+from .schemas import ValidKeyExportKeyInput
+from .security import decrypt_secret
 
 
 async def remember_valid_key(session: AsyncSession, credential_id: int, *, observed_at: datetime) -> None:
@@ -24,15 +27,9 @@ async def remember_valid_key(session: AsyncSession, credential_id: int, *, obser
     ))
 
 
-async def list_valid_key_records(
-    session: AsyncSession,
-    *,
-    provider: str | None = None,
-    storage_type: str | None = None,
-    query: str | None = None,
-    ip: str | None = None,
-    page: int = 1,
-) -> dict[str, Any]:
+def _valid_key_filters(
+    *, provider: str | None, storage_type: str | None, query: str | None, ip: str | None,
+) -> list[Any]:
     filters = []
     provider = scoped_provider(provider, storage_type)
     if provider:
@@ -53,6 +50,19 @@ async def list_valid_key_records(
     elif query and query.strip():
         prefix = query.strip()[:32].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         filters.append(Credential.key_prefix.like(f"{prefix}%", escape="\\"))
+    return filters
+
+
+async def list_valid_key_records(
+    session: AsyncSession,
+    *,
+    provider: str | None = None,
+    storage_type: str | None = None,
+    query: str | None = None,
+    ip: str | None = None,
+    page: int = 1,
+) -> dict[str, Any]:
+    filters = _valid_key_filters(provider=provider, storage_type=storage_type, query=query, ip=ip)
     total = int(await session.scalar(
         select(func.count(ValidKeyRecord.credential_id))
         .join(Credential, Credential.id == ValidKeyRecord.credential_id)
@@ -90,3 +100,57 @@ async def list_valid_key_records(
         "totalPages": total_pages,
         "pageSize": page_size,
     }
+
+
+def _validate_export_scope(provider: str, storage_type: str | None = None) -> None:
+    if provider not in set(STORAGE_TYPE_PROVIDERS.values()):
+        raise HTTPException(status_code=422, detail="服务平台无效")
+    if storage_type is not None and STORAGE_TYPE_PROVIDERS.get(storage_type) != provider:
+        raise HTTPException(status_code=422, detail="密钥类型与服务平台不匹配")
+
+
+async def export_selected_valid_keys(
+    session: AsyncSession, *, provider: str, keys: list[ValidKeyExportKeyInput],
+) -> list[str]:
+    """Reveal only the complete, platform-scoped archive selection in input order."""
+    _validate_export_scope(provider)
+    identities = [(item.id, item.type) for item in keys]
+    if not 1 <= len(keys) <= 100 or len(set(identities)) != len(identities):
+        raise HTTPException(status_code=422, detail="所选密钥参数无效")
+    if any(STORAGE_TYPE_PROVIDERS.get(item.type) != provider for item in keys):
+        raise HTTPException(status_code=404, detail="所选有效密钥记录已变更或不存在，请刷新列表后重试")
+    rows = (await session.scalars(select(Credential)
+        .join(ValidKeyRecord, ValidKeyRecord.credential_id == Credential.id)
+        .where(Credential.provider == provider, tuple_(Credential.id, Credential.storage_type).in_(identities))
+    )).all()
+    matched = {(row.provider, row.id, row.storage_type): row for row in rows}
+    requested = [(provider, identifier, storage_type) for identifier, storage_type in identities]
+    if any(identity not in matched for identity in requested):
+        raise HTTPException(status_code=404, detail="所选有效密钥记录已变更或不存在，请刷新列表后重试")
+    return [decrypt_secret(matched[identity].encrypted_secret) for identity in requested]
+
+
+def valid_key_export_statement(
+    *, provider: str, storage_type: str | None = None,
+    query: str | None = None, ip: str | None = None,
+) -> Select[tuple[str]]:
+    """Select archive ciphertext without loading ORM objects or limiting pages."""
+    _validate_export_scope(provider, storage_type)
+    filters = _valid_key_filters(provider=provider, storage_type=storage_type, query=query, ip=ip)
+    return (select(Credential.encrypted_secret)
+        .join(ValidKeyRecord, ValidKeyRecord.credential_id == Credential.id)
+        .where(*filters)
+        .order_by(ValidKeyRecord.last_valid_at.desc(), ValidKeyRecord.credential_id.desc())
+    )
+
+
+async def export_all_valid_keys(
+    session: AsyncSession, *, provider: str, storage_type: str | None = None,
+    query: str | None = None, ip: str | None = None,
+) -> list[str]:
+    """Export every archive match across pages, regardless of its current status."""
+    statement = valid_key_export_statement(
+        provider=provider, storage_type=storage_type, query=query, ip=ip,
+    ).with_only_columns(Credential)
+    rows = (await session.scalars(statement)).all()
+    return [decrypt_secret(row.encrypted_secret) for row in rows]

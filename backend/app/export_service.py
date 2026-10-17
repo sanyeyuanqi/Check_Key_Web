@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import AuthUser, CredentialStatus, ExportRecord
 from .ip_geolocation import resolve_ip_region
+from .query_cache import invalidate_query_cache
 
 
 EXPORT_STATUSES = ("valid", "usage_limit_reached", "insufficient_credit", "invalid")
@@ -87,6 +88,7 @@ async def record_export(
         ip_address=ip_address,
     ))
     await session.commit()
+    await invalidate_query_cache("exports")
 
 
 def _escape_filter_literal(value: str) -> str:
@@ -129,6 +131,10 @@ async def list_export_records(
         "all": "所有密钥", "valid": "可用密钥", "usage_limit_reached": "额度待恢复",
         "insufficient_credit": "余额不足", "invalid": "不可用密钥",
     }
+    archive_names = {
+        "archive_selected": "有效密钥记录 · 勾选导出",
+        "archive_all": "有效密钥记录 · 全部匹配",
+    }
     addresses = {row.ip_address for row in records}
     ip_regions = await asyncio.to_thread(
         lambda: {address: resolve_ip_region(address) for address in addresses}
@@ -142,7 +148,9 @@ async def list_export_records(
             "storageType": row.storage_type,
             "status": row.status,
             "statusNames": [
-                (status_names if row.status_mode == "exact" else legacy_names).get(value, "所有密钥" if value == "all" else value)
+                (archive_names if row.status_mode == "archive" else status_names if row.status_mode == "exact" else legacy_names).get(
+                    value, "所有密钥" if value == "all" else value,
+                )
                 for value in row.status.split(",")
             ],
             "count": row.credential_count,

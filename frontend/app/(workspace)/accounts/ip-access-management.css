@@ -1,16 +1,16 @@
 .ip-access-panel { min-width: 0; }
 .ip-access-panel .panel-toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px 18px; padding: 18px 22px; }
 .ip-access-toolbar-actions { display: flex; min-width: 0; max-width: 100%; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-left: auto; }
-.ip-access-toolbar-actions > .ui-button { min-height: 36px; padding: 7px 10px; }
-.ip-access-client { min-width: 0; color: #81958a; font-size: 11px; overflow-wrap: anywhere; }
-.ip-access-client code { color: #385b4d; font-family: Consolas, 'Courier New', monospace; }
+.ip-access-toolbar-actions > .ui-button { min-height: 36px; padding: 6px 10px; }
+.ip-access-client { min-width: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.ip-access-client code { color: var(--foreground); font-family: Consolas, 'Courier New', monospace; }
 .ip-access-form { display: flex; min-width: 0; flex-shrink: 0; flex-wrap: wrap; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--border); padding: 0 22px 18px; }
 .ip-access-field { display: flex; min-width: 0; max-width: 100%; flex: 1 1 220px; flex-direction: column; gap: 6px; }
-.ip-access-field > span { color: #728b7d; font-size: 12px; }
-.ip-access-field .ui-input { min-height: 36px; padding: 7px 10px; font-size: 12px; }
+.ip-access-field > span { color: #425e50; font-size: 14px; font-weight: 500; }
+.ip-access-field .ui-input { min-height: 36px; padding: 6px 10px; font-size: 14px; line-height: 22px; }
 .ip-access-reason-field { flex-basis: 280px; }
-.ip-access-form > .ui-button { min-height: 36px; padding: 7px 12px; }
-.ip-access-feedback { flex-shrink: 0; margin: 12px 22px 0; padding: 10px 12px; font-size: 12px; }
+.ip-access-form > .ui-button { min-height: 36px; padding: 6px 12px; }
+.ip-access-feedback { flex-shrink: 0; margin: 12px 22px 0; padding: 10px 12px; font-size: 14px; }
 .ip-access-notice { border: 1px solid #d4e7dc; border-radius: 6px; background: #edf7f1; color: #13795f; }
 .ip-access-table-scroll { min-height: 140px; }
 .ip-access-table { min-width: 760px; table-layout: fixed; }
@@ -20,10 +20,10 @@
 .ip-access-table th:nth-child(3) { width: 12%; }
 .ip-access-table th:nth-child(4) { width: 20%; }
 .ip-access-table th:nth-child(5) { width: 12%; }
-.ip-access-table th:nth-child(5), .ip-access-table td:nth-child(5) { text-align: center; }
-.ip-access-address { display: block; color: #3f665a; font-family: Consolas, 'Courier New', monospace; font-size: 12px; overflow-wrap: anywhere; }
-.ip-access-current-mark { display: block; margin-top: 4px; color: #8ca08f; font-size: 10px; }
-.ip-access-reason { color: #607870; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.ip-access-table th:nth-child(5), .ip-access-table td:nth-child(5) { padding-inline: 8px; text-align: center; }
+.ip-access-address { display: block; color: var(--foreground); font-family: Consolas, 'Courier New', monospace; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.ip-access-current-mark { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+.ip-access-reason { color: #425e50; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .ip-access-table .ip-access-time { white-space: normal; line-height: 1.7; }
 .ip-access-state { padding: 70px 16px; color: var(--muted); text-align: center; }
 .ip-access-mobile-list { display: none; }
@@ -42,6 +42,6 @@
   .ip-access-mobile-heading > div { min-width: 0; }
   .ip-access-mobile-heading .status-badge { flex-shrink: 0; }
   .ip-access-mobile-row > .ip-access-reason { margin-top: 10px; }
-  .ip-access-mobile-footer { align-items: center; margin-top: 12px; color: #8ca08f; font-size: 11px; line-height: 1.7; }
+  .ip-access-mobile-footer { align-items: center; margin-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.7; }
   .ip-access-mobile-footer > span { min-width: 0; }
 }

@@ -27,8 +27,14 @@ export function UploadDateTimeRangePicker({ value, onChange }: UploadDateTimeRan
     return start && end ? [dayjs(start), dayjs(end)] : null;
   }, [value.start, value.end]);
   const theme = useMemo<ThemeConfig>(() => ({
-    token: { colorPrimary: '#13795f', controlHeight: 36, borderRadius: 6, fontSize: 12, fontFamily: 'Segoe UI, Microsoft YaHei, sans-serif' },
-    components: { DatePicker: { inputFontSize: 12, paddingInline: 8, ...(compact ? { cellWidth: 24, timeColumnWidth: 40 } : {}) } },
+    token: {
+      colorPrimary: '#13795f', colorText: '#20382f', colorTextSecondary: '#425e50',
+      colorTextTertiary: '#596e62', colorTextDescription: '#596e62', colorTextPlaceholder: '#65776b',
+      colorTextHeading: '#20382f', colorTextLabel: '#425e50', colorIcon: '#596e62', colorIconHover: '#20382f',
+      controlHeight: 36, borderRadius: 6, fontSize: 14, fontSizeSM: 13,
+      fontFamily: '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif',
+    },
+    components: { DatePicker: { inputFontSize: 14, paddingInline: 8, ...(compact ? { cellWidth: 24, timeColumnWidth: 40 } : {}) } },
   }), [compact]);
   const timeOptions = useMemo(() => ({
     format: 'HH:mm',

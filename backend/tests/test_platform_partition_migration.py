@@ -149,11 +149,33 @@ async def seed(database, *, history_table=True):
         await connection.close()
 
 
+def migration_snapshot_row(record):
+    row = dict(record)
+    # A pre-queue row acquires only nullable metadata when upgrading to 0015.
+    # Keep actual queue event IDs so migration comparisons still detect changes.
+    if row.get("queue_event_id") is None:
+        row.pop("queue_event_id", None)
+    return row
+
+
+@pytest.mark.parametrize("record,expected", [
+    ({"id": 1, "queue_event_id": None, "source_ip": None}, {"id": 1, "source_ip": None}),
+    ({"id": 1, "source_ip": None}, {"id": 1, "source_ip": None}),
+    ({"id": 1, "queue_event_id": "00000001760676400000-00000000000000000010"},
+     {"id": 1, "queue_event_id": "00000001760676400000-00000000000000000010"}),
+    ({"id": 1, "queue_event_id": ""}, {"id": 1, "queue_event_id": ""}),
+])
+def test_migration_snapshot_normalizes_only_null_queue_metadata(record, expected):
+    original = dict(record)
+    assert migration_snapshot_row(record) == expected
+    assert record == original
+
+
 async def snapshot(database):
     connection = await connect(database)
     try:
         return {
-            table: [dict(row) for row in await connection.fetch(f"SELECT * FROM {table} ORDER BY 1")]
+            table: [migration_snapshot_row(row) for row in await connection.fetch(f"SELECT * FROM {table} ORDER BY 1")]
             for table in ("credentials", "validation_batch_items", "valid_key_records", "credential_statuses")
         }
     finally:

@@ -5,12 +5,12 @@ import { Checkbox, ConfigProvider, type ThemeConfig } from 'antd';
 import { credentialStorageTypes, resultBucket } from '@/lib/credential-types';
 import { apiFetch, apiUrl } from '@/lib/api-client';
 import { EmptyState, Modal } from '@/app/workspace-ui';
-import { platformByProvider } from '@/lib/platforms';
 import { UploadDateTimeRangePicker } from '@/app/upload-date-picker';
 import { CredentialStatusSelect } from '@/app/credential-status-select';
 import { addUploadTimeRangeFilter, uploadTimeRangeError, type UploadTimeRange } from '@/lib/upload-time-range';
 import { BulkCopyError, keySelectionId, selectedKeysText } from '@/lib/key-selection';
 import { appliedExportRange, keyListQueryParams, type KeyListQuery } from '@/lib/key-list-query';
+import { ExportPreparationError, handoffPreparedExport, startBrowserExportDownload } from '@/lib/prepared-export';
 
 type CredentialStatus = {
   value: string; name: string; tone: 'valid' | 'recovery' | 'insufficient' | 'invalid' | 'neutral'; sortOrder: number; count: number;
@@ -22,23 +22,13 @@ type KeyRow = {
 const selectionTheme: ThemeConfig = {
   components: { Checkbox: { colorPrimary: '#13795f', colorPrimaryHover: '#0e654f', colorBorder: '#c6d7ce', controlInteractiveSize: 14, borderRadiusSM: 3 } },
 };
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+});
 
 function fmt(value?: string | null) {
   if (!value) return '—';
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
-}
-
-function exportDownloadName(contentDisposition: string | null, fallback: string) {
-  const encoded = contentDisposition?.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
-  let name = '';
-  if (encoded) {
-    try { name = decodeURIComponent(encoded[1].trim().replace(/^"|"$/g, '')); } catch { /* Use the ordinary filename below. */ }
-  }
-  if (!name) {
-    const ordinary = contentDisposition?.match(/filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i);
-    name = (ordinary?.[1] ?? ordinary?.[2] ?? '').replace(/\\(.)/g, '$1').trim();
-  }
-  return name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim() || fallback;
+  return dateTimeFormatter.format(new Date(value));
 }
 
 function paginationItems(current: number, total: number): Array<number | 'start-gap' | 'end-gap'> {
@@ -73,6 +63,14 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
   const copying = copyMode !== null;
   const activeRequest = useRef<AbortController | null>(null);
   const activeCopy = useRef<AbortController | null>(null);
+  const activeExport = useRef<AbortController | null>(null);
+
+  const cancelExport = useCallback(() => {
+    activeExport.current?.abort();
+    activeExport.current = null;
+    setExporting(false);
+    setExportOpen(false);
+  }, []);
 
   const resetKeySelection = useCallback(() => {
     activeCopy.current?.abort();
@@ -81,7 +79,8 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
     setSelectedKeyIds(new Set());
   }, []);
 
-  const loadKeys = useCallback(async () => {
+  const loadKeys = useCallback(async (fresh = false) => {
+    cancelExport();
     resetKeySelection();
     activeRequest.current?.abort();
     const controller = new AbortController();
@@ -90,6 +89,7 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
     setError('');
     try {
       const params = keyListQueryParams(appliedQuery, { provider, storageType, page });
+      if (fresh) params.set('refresh', '1');
       const response = await apiFetch(`/api/keys?${params}`, { cache: 'no-store', signal: controller.signal });
       if (controller.signal.aborted) return;
       if (response.status === 401) {
@@ -117,11 +117,13 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
-  }, [storageType, provider, appliedQuery, page, setExportStatuses, resetKeySelection]);
+  }, [storageType, provider, appliedQuery, page, setExportStatuses, resetKeySelection, cancelExport]);
 
   useEffect(() => () => {
     activeCopy.current?.abort();
     activeCopy.current = null;
+    activeExport.current?.abort();
+    activeExport.current = null;
   }, []);
 
   useEffect(() => {
@@ -129,12 +131,14 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
     return () => {
       window.clearTimeout(timer);
       activeRequest.current?.abort();
+      activeExport.current?.abort();
     };
   }, [loadKeys]);
 
   function showNotice(message: string) { setNotice(message); setTimeout(() => setNotice(''), 2600); }
 
   function prepareFilterChange() {
+    cancelExport();
     resetKeySelection();
     activeRequest.current?.abort();
     setBusy(true);
@@ -171,6 +175,11 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
     event.preventDefault();
     const rangeError = uploadTimeRangeError(uploadTimeRangeDraft.start, uploadTimeRangeDraft.end);
     if (rangeError) return showNotice(rangeError);
+    if (appliedQuery.mode === 'filters' && appliedQuery.status === statusDraft
+      && appliedQuery.range.start === uploadTimeRangeDraft.start && appliedQuery.range.end === uploadTimeRangeDraft.end && page === 1) {
+      void loadKeys(true);
+      return;
+    }
     prepareFilterChange();
     setAppliedQuery({ mode: 'filters', status: statusDraft, range: { ...uploadTimeRangeDraft } });
     setPage(1);
@@ -179,6 +188,11 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
   function submitPrefixSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextPrefix = queryInput.trim();
+    if (appliedQuery.mode === 'prefix' && appliedQuery.prefix === nextPrefix && page === 1) {
+      setQueryInput(nextPrefix);
+      void loadKeys(true);
+      return;
+    }
     prepareFilterChange();
     setQueryInput(nextPrefix);
     setAppliedQuery({ mode: 'prefix', prefix: nextPrefix });
@@ -246,7 +260,6 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
   }
 
   const visiblePages = paginationItems(page, totalPages);
-  const platform = platformByProvider(provider);
   const statusByValue = new Map(statuses.map((item) => [item.value, item]));
   const allStatusCount = statuses.reduce((count, item) => count + item.count, 0);
   const selectedExportStatuses = statuses.filter((item) => exportStatuses.includes(item.value)).map((item) => item.value);
@@ -256,34 +269,39 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
     return <span className={`status-badge status-${item?.tone ?? 'neutral'}`}>{item?.name ?? value}</span>;
   }
 
-  function exportHref(targetStatuses: string[]) {
-    const params = new URLSearchParams({ status: targetStatuses.join(','), status_mode: 'exact', provider });
+  function exportRequestPath(targetStatuses: string[]) {
+    const params = new URLSearchParams({ status: targetStatuses.join(','), status_mode: 'exact', provider, prepare: '1' });
     if (storageType) params.set('type', storageType);
     addUploadTimeRangeFilter(params, appliedExportRange(appliedQuery));
-    return apiUrl(`/api/export?${params}`);
+    return `/api/export?${params}`;
   }
 
   async function confirmExport() {
-    if (exporting || busy || selectedExportStatuses.length === 0) return;
+    if (exporting || activeExport.current || busy || selectedExportStatuses.length === 0) return;
+    const controller = new AbortController();
+    activeExport.current = controller;
     setExporting(true);
     try {
-      const response = await fetch(exportHref(selectedExportStatuses), { cache: 'no-store', credentials: 'include' });
+      const response = await apiFetch(exportRequestPath(selectedExportStatuses), { cache: 'no-store', signal: controller.signal });
+      if (controller.signal.aborted || activeExport.current !== controller) return;
       if (response.status === 401) return window.location.replace('/login');
-      if (!response.ok) throw new Error('export failed');
-      const blobUrl = URL.createObjectURL(await response.blob());
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = exportDownloadName(response.headers.get('Content-Disposition'), `${platform?.slug || 'keys'}-selected.txt`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(blobUrl);
+      const prepared = await handoffPreparedExport(response, {
+        signal: controller.signal,
+        isCurrent: () => activeExport.current === controller,
+        download: (file) => startBrowserExportDownload(file, apiUrl),
+      });
+      if (!prepared || controller.signal.aborted || activeExport.current !== controller) return;
       setExportOpen(false);
-      showNotice('TXT 文件已开始下载');
-    } catch {
-      showNotice('导出失败，请稍后重试');
+      showNotice('文件已准备好，下载由浏览器管理');
+    } catch (error) {
+      if (!controller.signal.aborted && activeExport.current === controller) {
+        showNotice(error instanceof ExportPreparationError ? error.message : '导出失败，请稍后重试');
+      }
     } finally {
-      setExporting(false);
+      if (activeExport.current === controller) {
+        activeExport.current = null;
+        setExporting(false);
+      }
     }
   }
 
@@ -297,7 +315,7 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
           <div className="key-page-actions">
             <button type="button" disabled={busy || copying || selectedRows.length === 0} onClick={() => void copySelectedKeys()} className="ui-button ui-button--soft bulk-copy-button">{copyMode === 'batch' ? '复制中…' : selectedRows.length > 0 ? `批量复制（${selectedRows.length}）` : '批量复制'}</button>
             <button type="button" disabled={busy || statuses.length === 0} onClick={() => setExportOpen(true)} className="ui-button ui-button--primary">导出</button>
-            <button type="button" disabled={busy} onClick={() => void loadKeys()} className="ui-button">刷新</button>
+            <button type="button" disabled={busy} onClick={() => void loadKeys(true)} className="ui-button">刷新</button>
           </div>
         </div>
         <section aria-label="密钥列表" className="data-panel">
@@ -361,7 +379,7 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
         <textarea readOnly value={reveal.secret} className="ui-input secret-textarea" aria-label="完整密钥" />
         <button type="button" disabled={copying} onClick={() => void copyText(async () => reveal.secret, 'single', '完整密钥已复制')} className="ui-button ui-button--primary ui-button--block">复制完整密钥</button>
       </Modal>}
-      {exportOpen && <Modal title="导出密钥" showClose={false} close={() => { if (!exporting) setExportOpen(false); }}>
+      {exportOpen && <Modal title="导出密钥" showClose={false} close={cancelExport}>
         <div role="group" aria-label="导出范围" className="export-options">
           {statuses.map((option) => <label key={option.value} className={`export-option ${exportStatuses.includes(option.value) ? 'is-selected' : ''} ${exporting ? 'is-disabled' : ''}`}><input type="checkbox" name="export-status" value={option.value} disabled={exporting || busy} checked={exportStatuses.includes(option.value)} onChange={(event) => {
             const checked = event.target.checked;
@@ -369,7 +387,8 @@ export default function Dashboard({ initialProvider }: { initialProvider: string
           }} /><span className="export-option-name">{option.name}</span><span className="export-option-count">{option.count}</span></label>)}
         </div>
         {statuses.length === 0 && <p role="status" className="modal-description">{busy ? '正在读取导出范围…' : '暂无可导出的状态，请刷新重试。'}</p>}
-        <div className="modal-actions"><button type="button" disabled={exporting} onClick={() => setExportOpen(false)} className="ui-button">取消</button><button type="button" disabled={exporting || busy || selectedExportStatuses.length === 0} onClick={() => void confirmExport()} className="ui-button ui-button--primary">{exporting ? '正在导出…' : '确认导出'}</button></div>
+        <p role="status" className="modal-description">{exporting ? '正在准备导出文件，请稍候。准备完成后由浏览器下载。' : '文件准备完成后由浏览器下载，支持大量密钥导出。'}</p>
+        <div className="modal-actions"><button type="button" onClick={cancelExport} className="ui-button">取消</button><button type="button" disabled={exporting || busy || selectedExportStatuses.length === 0} onClick={() => void confirmExport()} className="ui-button ui-button--primary">{exporting ? '准备文件…' : '确认导出'}</button></div>
       </Modal>}
       {notice && <div role="status" className="toast">{notice}</div>}
     </ConfigProvider>

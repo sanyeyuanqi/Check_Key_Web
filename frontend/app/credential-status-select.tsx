@@ -15,9 +15,16 @@ type CredentialStatusSelectProps = {
 };
 
 const theme: ThemeConfig = {
-  token: { colorPrimary: '#13795f', colorText: '#385b4d', colorBorder: '#dfe7e1', controlItemBgActive: '#eaf4ef', controlItemBgActiveHover: '#dceee2', controlHeight: 36, borderRadius: 6, fontSize: 12, fontFamily: 'Segoe UI, Microsoft YaHei, sans-serif' },
+  token: {
+    colorPrimary: '#13795f', colorText: '#20382f', colorTextSecondary: '#425e50',
+    colorTextTertiary: '#596e62', colorTextDescription: '#596e62', colorTextPlaceholder: '#65776b',
+    colorTextHeading: '#20382f', colorTextLabel: '#425e50', colorIcon: '#596e62', colorIconHover: '#20382f',
+    colorBorder: '#dfe7e1', controlItemBgActive: '#eaf4ef', controlItemBgActiveHover: '#dceee2',
+    controlHeight: 36, borderRadius: 6, fontSize: 14, fontSizeSM: 13,
+    fontFamily: '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif',
+  },
   components: {
-    Select: { selectorBg: '#fcfdfc', optionFontSize: 12, optionHeight: 30, optionPadding: '5px 7px', optionSelectedBg: '#eaf4ef', optionSelectedColor: '#13795f', optionActiveBg: '#f3f8f5' },
+    Select: { selectorBg: '#fcfdfc', optionFontSize: 14, optionLineHeight: 1.5714285714, optionHeight: 34, optionPadding: '6px 8px', optionSelectedBg: '#eaf4ef', optionSelectedColor: '#13795f', optionSelectedFontWeight: 600, optionActiveBg: '#f3f8f5' },
   },
 };
 
